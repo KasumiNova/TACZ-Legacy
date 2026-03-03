@@ -87,7 +87,9 @@ public data class BulletCreationRequest(
     val knockback: Float = 0f,
     val igniteEntity: Boolean = false,
     val igniteEntityTime: Int = 2,
-    val explosion: ExplosionDto? = null
+    val igniteBlock: Boolean = false,
+    val explosion: ExplosionDto? = null,
+    val gunId: String? = null
 )
 
 public data class DistanceDamagePairDto(

@@ -52,7 +52,9 @@ public data class WeaponBehaviorConfig(
     val bulletKnockback: Float = 0f,
     val bulletIgniteEntity: Boolean = false,
     val bulletIgniteEntityTime: Int = 2,
+    val bulletIgniteBlock: Boolean = false,
     val bulletExplosion: ExplosionDto? = null,
+    val bulletGunId: String? = null,
     val fireSoundPitchBase: Float = 1.0f,
     val fireSoundPitchJitter: Float = 0.0f
 )
@@ -202,7 +204,9 @@ public class WeaponPortBehaviorEngine(
                     knockback = config.bulletKnockback,
                     igniteEntity = config.bulletIgniteEntity,
                     igniteEntityTime = config.bulletIgniteEntityTime,
-                    explosion = config.bulletExplosion
+                    igniteBlock = config.bulletIgniteBlock,
+                    explosion = config.bulletExplosion,
+                    gunId = config.bulletGunId
                 )
             )
             if (firstBulletEntityId == null) {

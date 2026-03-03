@@ -30,6 +30,7 @@ public data class WeaponBallistics(
     val knockback: Float = 0f,
     val igniteEntity: Boolean = false,
     val igniteEntityTime: Int = 2,
+    val igniteBlock: Boolean = false,
     val explosion: WeaponExplosionData? = null
 )
 
@@ -131,6 +132,7 @@ public class WeaponRuntimeRegistry(
                         knockback = data.bullet.knockback.coerceAtLeast(0f),
                         igniteEntity = data.bullet.ignite.entity,
                         igniteEntityTime = data.bullet.igniteEntityTime.coerceAtLeast(0),
+                        igniteBlock = data.bullet.ignite.block,
                         explosion = data.bullet.explosion?.takeIf { it.explode }?.let {
                             WeaponExplosionData(
                                 radius = it.radius.coerceAtLeast(0f),
@@ -142,11 +144,39 @@ public class WeaponRuntimeRegistry(
                         }
                     )
 
+                    val adjustKey = spec.fireMode.name
+                    val adjust = data.fireModeAdjust[adjustKey]
+
+                    val adjustedBallistics = if (adjust != null) {
+                        ballistics.copy(
+                            damage = (ballistics.damage + adjust.damageAmount).coerceAtLeast(0f),
+                            speed = (ballistics.speed + adjust.speed / TICKS_PER_SECOND).coerceAtLeast(MIN_PROJECTILE_SPEED_PER_TICK),
+                            knockback = (ballistics.knockback + adjust.knockback).coerceAtLeast(0f),
+                            armorIgnore = (ballistics.armorIgnore + adjust.armorIgnore).coerceIn(0f, 1f),
+                            headShotMultiplier = (ballistics.headShotMultiplier + adjust.headShotMultiplier).coerceAtLeast(0f),
+                            inaccuracy = ballistics.inaccuracy.copy(
+                                aim = (ballistics.inaccuracy.aim + adjust.aimInaccuracy).coerceAtLeast(0f),
+                                stand = (ballistics.inaccuracy.stand + adjust.otherInaccuracy).coerceAtLeast(0f),
+                                move = (ballistics.inaccuracy.move + adjust.otherInaccuracy).coerceAtLeast(0f),
+                                sneak = (ballistics.inaccuracy.sneak + adjust.otherInaccuracy).coerceAtLeast(0f),
+                                lie = (ballistics.inaccuracy.lie + adjust.otherInaccuracy).coerceAtLeast(0f)
+                            )
+                        )
+                    } else {
+                        ballistics
+                    }
+
+                    val adjustedSpec = if (adjust != null && adjust.roundsPerMinute != 0) {
+                        spec.copy(roundsPerMinute = (spec.roundsPerMinute + adjust.roundsPerMinute).coerceAtLeast(1))
+                    } else {
+                        spec
+                    }
+
                     definitionsByGunId[gunId] = WeaponDefinition(
                         sourceId = sourceId,
                         gunId = gunId,
-                        spec = spec,
-                            ballistics = ballistics,
+                        spec = adjustedSpec,
+                            ballistics = adjustedBallistics,
                             scriptParams = data.scriptParams
                     )
                 }.onFailure {

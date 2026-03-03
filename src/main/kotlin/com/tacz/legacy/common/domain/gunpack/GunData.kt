@@ -26,6 +26,7 @@ public data class GunData(
     val reload: GunReloadData,
     val moveSpeed: GunMoveSpeedData = GunMoveSpeedData(),
     val melee: GunMeleeData = GunMeleeData(),
+    val fireModeAdjust: Map<String, GunFireModeAdjustData> = emptyMap(),
     val scriptParams: Map<String, Float> = emptyMap()
 )
 
@@ -109,6 +110,17 @@ public data class GunDefaultMeleeData(
     val damage: Float = 0f,
     val knockback: Float = 0.2f,
     val prepTimeSeconds: Float = 0.1f
+)
+
+public data class GunFireModeAdjustData(
+    val damageAmount: Float = 0f,
+    val roundsPerMinute: Int = 0,
+    val speed: Float = 0f,
+    val knockback: Float = 0f,
+    val armorIgnore: Float = 0f,
+    val headShotMultiplier: Float = 0f,
+    val aimInaccuracy: Float = 0f,
+    val otherInaccuracy: Float = 0f
 )
 
 public data class GunBurstData(

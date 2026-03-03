@@ -178,7 +178,10 @@ internal class MinecraftWorldPort(
                 explosionRadius = request.explosion?.radius ?: 0f,
                 explosionDamage = request.explosion?.damage ?: 0f,
                 explosionKnockback = request.explosion?.knockback ?: false,
-                explosionDestroyBlock = request.explosion?.destroyBlock ?: false
+                explosionDestroyBlock = request.explosion?.destroyBlock ?: false,
+                igniteBlock = request.igniteBlock,
+                explosionDelaySeconds = request.explosion?.delaySeconds ?: -1f,
+                gunId = request.gunId
             )
             shoot(
                 normalizedDirection.x,

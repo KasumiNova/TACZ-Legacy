@@ -3,15 +3,21 @@ package com.tacz.legacy.common.infrastructure.mc.entity
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.entity.projectile.EntityThrowable
+import net.minecraft.init.Blocks
 import net.minecraft.nbt.NBTTagCompound
 import net.minecraft.nbt.NBTTagList
 import net.minecraft.util.DamageSource
 import net.minecraft.util.EntityDamageSourceIndirect
+import net.minecraft.util.EnumFacing
 import net.minecraft.util.math.AxisAlignedBB
 import net.minecraft.util.math.RayTraceResult
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.World
 import net.minecraft.world.WorldServer
+import net.minecraftforge.common.MinecraftForge
+import com.tacz.legacy.common.domain.event.EntityHurtByGunEvent
+import com.tacz.legacy.common.domain.event.EntityKillByGunEvent
+import com.tacz.legacy.common.domain.event.AmmoHitBlockEvent
 
 public class LegacyBulletEntity : EntityThrowable {
 
@@ -33,6 +39,9 @@ public class LegacyBulletEntity : EntityThrowable {
     private var explosionDamage: Float = 0f
     private var explosionKnockback: Boolean = false
     private var explosionDestroyBlock: Boolean = false
+    private var igniteBlock: Boolean = false
+    private var explosionDelayTicks: Int = Int.MAX_VALUE
+    private var gunId: String? = null
 
     public constructor(worldIn: World) : super(worldIn) {
         setSize(BULLET_SIZE, BULLET_SIZE)
@@ -64,7 +73,10 @@ public class LegacyBulletEntity : EntityThrowable {
         explosionRadius: Float = 0f,
         explosionDamage: Float = 0f,
         explosionKnockback: Boolean = false,
-        explosionDestroyBlock: Boolean = false
+        explosionDestroyBlock: Boolean = false,
+        igniteBlock: Boolean = false,
+        explosionDelaySeconds: Float = -1f,
+        gunId: String? = null
     ) {
         configuredDamage = damage.coerceAtLeast(0.0f)
         configuredGravity = gravity.coerceAtLeast(0.0f)
@@ -82,6 +94,13 @@ public class LegacyBulletEntity : EntityThrowable {
         this.explosionDamage = explosionDamage.coerceAtLeast(0f)
         this.explosionKnockback = explosionKnockback
         this.explosionDestroyBlock = explosionDestroyBlock
+        this.igniteBlock = igniteBlock
+        this.explosionDelayTicks = if (explosionDelaySeconds < 0f) {
+            Int.MAX_VALUE
+        } else {
+            (explosionDelaySeconds * 20f).toInt().coerceAtLeast(1)
+        }
+        this.gunId = gunId
     }
 
     public override fun onUpdate() {
@@ -100,6 +119,15 @@ public class LegacyBulletEntity : EntityThrowable {
 
         if (world.isRemote) {
             return
+        }
+
+        if (explosionDelayTicks != Int.MAX_VALUE) {
+            explosionDelayTicks -= 1
+            if (explosionDelayTicks <= 0 && explosionRadius > 0f) {
+                createExplosion()
+                setDead()
+                return
+            }
         }
 
         ageTicks += 1
@@ -170,8 +198,44 @@ public class LegacyBulletEntity : EntityThrowable {
                     damage *= headShotMultiplier
                 }
 
+                val preEvent = EntityHurtByGunEvent.Pre(
+                    target = target,
+                    attacker = thrower as? EntityLivingBase,
+                    damage = damage,
+                    headshot = headshot,
+                    hitPos = hitVec,
+                    gunId = gunId
+                )
+                if (MinecraftForge.EVENT_BUS.post(preEvent)) {
+                    return
+                }
+                damage = preEvent.damage
+
+                val wasAlive = target is EntityLivingBase && target.isEntityAlive
                 val attacked = applyDamageWithArmorIgnore(target, damage)
                 if (attacked) {
+                    MinecraftForge.EVENT_BUS.post(
+                        EntityHurtByGunEvent.Post(
+                            target = target,
+                            attacker = thrower as? EntityLivingBase,
+                            damage = damage,
+                            headshot = headshot,
+                            hitPos = hitVec,
+                            gunId = gunId
+                        )
+                    )
+
+                    if (wasAlive && target is EntityLivingBase && !target.isEntityAlive) {
+                        MinecraftForge.EVENT_BUS.post(
+                            EntityKillByGunEvent(
+                                target = target,
+                                attacker = thrower as? EntityLivingBase,
+                                headshot = headshot,
+                                gunId = gunId
+                            )
+                        )
+                    }
+
                     if (knockbackStrength > 0f && target is EntityLivingBase) {
                         val knockVec = Vec3d(motionX, motionY, motionZ).normalize()
                         target.addVelocity(
@@ -199,6 +263,17 @@ public class LegacyBulletEntity : EntityThrowable {
             }
 
             RayTraceResult.Type.BLOCK -> {
+                val hitVec = result.hitVec ?: Vec3d(posX, posY, posZ)
+                MinecraftForge.EVENT_BUS.post(
+                    AmmoHitBlockEvent(
+                        hitPos = hitVec,
+                        attacker = thrower as? EntityLivingBase,
+                        gunId = gunId
+                    )
+                )
+                if (igniteBlock) {
+                    tryIgniteBlockAt(result)
+                }
                 if (explosionRadius > 0f) {
                     createExplosion()
                 }
@@ -206,6 +281,16 @@ public class LegacyBulletEntity : EntityThrowable {
             }
 
             else -> Unit
+        }
+    }
+
+    private fun tryIgniteBlockAt(result: RayTraceResult) {
+        if (world.isRemote) return
+        val sideHit = result.sideHit ?: return
+        val blockPos = result.blockPos ?: return
+        val offsetPos = blockPos.offset(sideHit)
+        if (world.isAirBlock(offsetPos) && Blocks.FIRE.canPlaceBlockAt(world, offsetPos)) {
+            world.setBlockState(offsetPos, Blocks.FIRE.defaultState)
         }
     }
 
@@ -307,6 +392,9 @@ public class LegacyBulletEntity : EntityThrowable {
         compound.setFloat(TAG_EXPLOSION_DAMAGE, explosionDamage)
         compound.setBoolean(TAG_EXPLOSION_KNOCKBACK, explosionKnockback)
         compound.setBoolean(TAG_EXPLOSION_DESTROY_BLOCK, explosionDestroyBlock)
+        compound.setBoolean(TAG_IGNITE_BLOCK, igniteBlock)
+        compound.setInteger(TAG_EXPLOSION_DELAY, explosionDelayTicks)
+        gunId?.let { compound.setString(TAG_GUN_ID, it) }
 
         if (damageAdjust.isNotEmpty()) {
             val list = NBTTagList()
@@ -364,6 +452,13 @@ public class LegacyBulletEntity : EntityThrowable {
         explosionDamage = compound.getFloat(TAG_EXPLOSION_DAMAGE).coerceAtLeast(0f)
         explosionKnockback = compound.getBoolean(TAG_EXPLOSION_KNOCKBACK)
         explosionDestroyBlock = compound.getBoolean(TAG_EXPLOSION_DESTROY_BLOCK)
+        igniteBlock = compound.getBoolean(TAG_IGNITE_BLOCK)
+        explosionDelayTicks = if (compound.hasKey(TAG_EXPLOSION_DELAY)) {
+            compound.getInteger(TAG_EXPLOSION_DELAY).coerceAtLeast(0)
+        } else {
+            Int.MAX_VALUE
+        }
+        gunId = if (compound.hasKey(TAG_GUN_ID)) compound.getString(TAG_GUN_ID) else null
     }
 
     private fun applyFrictionCompensation() {
@@ -449,6 +544,9 @@ public class LegacyBulletEntity : EntityThrowable {
         private const val TAG_EXPLOSION_DAMAGE: String = "ExpDamage"
         private const val TAG_EXPLOSION_KNOCKBACK: String = "ExpKnockback"
         private const val TAG_EXPLOSION_DESTROY_BLOCK: String = "ExpDestroyBlock"
+        private const val TAG_IGNITE_BLOCK: String = "IgniteBlock"
+        private const val TAG_EXPLOSION_DELAY: String = "ExpDelay"
+        private const val TAG_GUN_ID: String = "GunId"
     }
 
 }

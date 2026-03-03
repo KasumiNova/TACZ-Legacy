@@ -17,6 +17,8 @@ import com.tacz.legacy.client.input.WeaponAimInputStateRegistry
 import com.tacz.legacy.common.infrastructure.mc.network.LegacyNetworkHandler
 import com.tacz.legacy.common.infrastructure.mc.network.PacketWeaponInput
 import com.tacz.legacy.common.domain.weapon.WeaponInput
+import com.tacz.legacy.common.domain.event.GunFireEvent
+import com.tacz.legacy.common.domain.event.GunShootEvent
 import net.minecraft.entity.player.EntityPlayer
 import net.minecraft.entity.player.EntityPlayerMP
 import net.minecraftforge.event.entity.player.AttackEntityEvent
@@ -24,6 +26,7 @@ import net.minecraftforge.event.entity.player.PlayerInteractEvent
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
 import net.minecraftforge.fml.common.gameevent.PlayerEvent
 import net.minecraftforge.fml.common.gameevent.TickEvent
+import net.minecraftforge.common.MinecraftForge
 
 public class WeaponPlayerTickEventHandler(
     private val orchestrator: WeaponAutoSessionOrchestrator,
@@ -70,6 +73,10 @@ public class WeaponPlayerTickEventHandler(
                     behaviorConfig = behaviorContext.config
                 )
             )
+        }
+
+        if (tickResult?.step?.shotFired == true) {
+            MinecraftForge.EVENT_BUS.post(GunFireEvent(shooter = player, gunId = gunId))
         }
 
         updateAnimationRuntime(
@@ -168,6 +175,13 @@ public class WeaponPlayerTickEventHandler(
             )
         }
 
+        if (result?.step?.shotFired == true) {
+            if (input == WeaponInput.TriggerPressed) {
+                MinecraftForge.EVENT_BUS.post(GunShootEvent(shooter = player, gunId = gunId))
+            }
+            MinecraftForge.EVENT_BUS.post(GunFireEvent(shooter = player, gunId = gunId))
+        }
+
         updateAnimationRuntime(
             worldIsRemote = player.world.isRemote,
             sessionId = sessionId,
@@ -238,6 +252,7 @@ public class WeaponPlayerTickEventHandler(
                 bulletKnockback = weaponDefinition?.ballistics?.knockback ?: fallback.bulletKnockback,
                 bulletIgniteEntity = weaponDefinition?.ballistics?.igniteEntity ?: fallback.bulletIgniteEntity,
                 bulletIgniteEntityTime = weaponDefinition?.ballistics?.igniteEntityTime ?: fallback.bulletIgniteEntityTime,
+                bulletIgniteBlock = weaponDefinition?.ballistics?.igniteBlock ?: fallback.bulletIgniteBlock,
                 bulletExplosion = weaponDefinition?.ballistics?.explosion?.let {
                     ExplosionDto(
                         radius = it.radius,
@@ -247,6 +262,7 @@ public class WeaponPlayerTickEventHandler(
                         delaySeconds = it.delaySeconds
                     )
                 } ?: fallback.bulletExplosion,
+                bulletGunId = weaponDefinition?.gunId,
                 fireSoundPitchJitter = FIRE_SOUND_PITCH_JITTER
             ),
             reloadTicks = weaponDefinition?.spec?.reloadTicks,

@@ -8,6 +8,7 @@ import com.tacz.legacy.common.domain.gunpack.GunBulletData
 import com.tacz.legacy.common.domain.gunpack.GunBurstData
 import com.tacz.legacy.common.domain.gunpack.GunDefaultMeleeData
 import com.tacz.legacy.common.domain.gunpack.GunExplosionData
+import com.tacz.legacy.common.domain.gunpack.GunFireModeAdjustData
 import com.tacz.legacy.common.domain.gunpack.GunIgniteData
 import com.tacz.legacy.common.domain.gunpack.GunMeleeData
 import com.tacz.legacy.common.domain.gunpack.GunMoveSpeedData
@@ -195,6 +196,7 @@ public class GunPackCompatibilityParser {
         val reload = readReload(root, report)
         val moveSpeed = readMoveSpeed(root, report)
         val melee = readMelee(root, report)
+        val fireModeAdjust = readFireModeAdjust(root, report)
         val scriptParams = readScriptParams(root, report)
         val bullet = readBullet(root, report)
 
@@ -225,6 +227,7 @@ public class GunPackCompatibilityParser {
                 reload = reload,
                 moveSpeed = moveSpeed,
                 melee = melee,
+                fireModeAdjust = fireModeAdjust,
                 scriptParams = scriptParams
             ),
             report
@@ -954,6 +957,51 @@ public class GunPackCompatibilityParser {
             knockback = readFloat(defaultRoot, "knockback", emptyList(), "melee.default.knockback", 0.2f, report),
             prepTimeSeconds = readFloat(defaultRoot, "prep", listOf("prepTime"), "melee.default.prep", 0.1f, report)
         )
+    }
+
+    private fun readFireModeAdjust(root: JsonObject, report: GunPackCompatibilityReport): Map<String, GunFireModeAdjustData> {
+        val field = root.findField("fire_mode_adjust", listOf("fireModeAdjust"), "fire_mode_adjust", report)
+            ?: return emptyMap()
+
+        val obj = field.second
+        if (!obj.isJsonObject) {
+            report.addWarning(
+                code = IssueCode.INVALID_FIELD_TYPE,
+                field = "fire_mode_adjust",
+                message = "Field 'fire_mode_adjust' should be an object, ignored."
+            )
+            return emptyMap()
+        }
+
+        val adjustRoot = obj.asJsonObject
+        val result = mutableMapOf<String, GunFireModeAdjustData>()
+
+        for (entry in adjustRoot.entrySet()) {
+            val modeName = entry.key.uppercase()
+            val modeValue = entry.value
+            if (!modeValue.isJsonObject) {
+                report.addWarning(
+                    code = IssueCode.INVALID_FIELD_TYPE,
+                    field = "fire_mode_adjust.$modeName",
+                    message = "Fire mode adjust entry '$modeName' should be an object, skipped."
+                )
+                continue
+            }
+
+            val modeRoot = modeValue.asJsonObject
+            result[modeName] = GunFireModeAdjustData(
+                damageAmount = readFloat(modeRoot, "damage", emptyList(), "fire_mode_adjust.$modeName.damage", 0f, report),
+                roundsPerMinute = readInt(modeRoot, "rpm", emptyList(), "fire_mode_adjust.$modeName.rpm", 0, report),
+                speed = readFloat(modeRoot, "speed", emptyList(), "fire_mode_adjust.$modeName.speed", 0f, report),
+                knockback = readFloat(modeRoot, "knockback", emptyList(), "fire_mode_adjust.$modeName.knockback", 0f, report),
+                armorIgnore = readFloat(modeRoot, "armor_ignore", listOf("armorIgnore"), "fire_mode_adjust.$modeName.armor_ignore", 0f, report),
+                headShotMultiplier = readFloat(modeRoot, "head_shot_multiplier", listOf("headShotMultiplier"), "fire_mode_adjust.$modeName.head_shot_multiplier", 0f, report),
+                aimInaccuracy = readFloat(modeRoot, "aim_inaccuracy", listOf("aimInaccuracy"), "fire_mode_adjust.$modeName.aim_inaccuracy", 0f, report),
+                otherInaccuracy = readFloat(modeRoot, "other_inaccuracy", listOf("otherInaccuracy"), "fire_mode_adjust.$modeName.other_inaccuracy", 0f, report)
+            )
+        }
+
+        return result
     }
 
     private fun readExtraDamage(bulletRoot: JsonObject, report: GunPackCompatibilityReport): GunExtraDamageData {

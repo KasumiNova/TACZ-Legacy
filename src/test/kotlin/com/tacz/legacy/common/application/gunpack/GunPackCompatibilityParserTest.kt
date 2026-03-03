@@ -593,4 +593,255 @@ public class GunPackCompatibilityParserTest {
         assertEquals(20.0f, extra.damageAdjust[0].distance, 0.0001f)
         assertTrue(result.report.allIssues().any { it.field.contains("damage_adjust[0].distance") })
     }
+
+    // ---- ignite / explosion / knockback / tracer ----
+
+    @Test
+    public fun `parser should parse bullet ignite as boolean`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "bullet": {
+                "damage": 5.0,
+                "speed": 3.0,
+                "ignite": true,
+                "ignite_entity_time": 5
+              }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:ignite-bool")
+        val b = result.gunData!!.bullet
+        assertTrue(b.ignite.entity)
+        assertTrue(b.ignite.block)
+        assertEquals(5, b.igniteEntityTime)
+    }
+
+    @Test
+    public fun `parser should parse bullet ignite as object`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "bullet": {
+                "damage": 5.0,
+                "speed": 3.0,
+                "ignite": { "entity": true, "block": false }
+              }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:ignite-obj")
+        val b = result.gunData!!.bullet
+        assertTrue(b.ignite.entity)
+        assertFalse(b.ignite.block)
+    }
+
+    @Test
+    public fun `parser should parse explosion data`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "bullet": {
+                "damage": 5.0,
+                "speed": 3.0,
+                "explosion": {
+                  "explode": true,
+                  "radius": 3.5,
+                  "damage": 10.0,
+                  "knockback": true,
+                  "destroy_block": true,
+                  "delay": 1.5
+                }
+              }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:explosion")
+        val exp = result.gunData!!.bullet.explosion
+        assertNotNull(exp)
+        assertTrue(exp!!.explode)
+        assertEquals(3.5f, exp.radius, 0.001f)
+        assertEquals(10.0f, exp.damage, 0.001f)
+        assertTrue(exp.knockback)
+        assertTrue(exp.destroyBlock)
+        assertEquals(1.5f, exp.delaySeconds, 0.001f)
+    }
+
+    @Test
+    public fun `parser should return null when explosion absent`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "bullet": { "damage": 5.0, "speed": 3.0 }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:no-explosion")
+        assertNull(result.gunData!!.bullet.explosion)
+    }
+
+    @Test
+    public fun `parser should parse knockback`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "bullet": { "damage": 5.0, "speed": 3.0, "knockback": 2.5 }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:knockback")
+        assertEquals(2.5f, result.gunData!!.bullet.knockback, 0.001f)
+    }
+
+    @Test
+    public fun `parser should parse tracer_count_interval`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "bullet": { "damage": 5.0, "speed": 3.0, "tracer_count_interval": 3 }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:tracer")
+        assertEquals(3, result.gunData!!.bullet.tracerCountInterval)
+    }
+
+    // ---- burst / moveSpeed / melee / fireModeAdjust ----
+
+    @Test
+    public fun `parser should parse burst_data`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "burst_data": {
+                "continuous_shoot": true,
+                "count": 5,
+                "bpm": 300,
+                "min_interval": 0.5
+              }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:burst")
+        val burst = result.gunData!!.burstData
+        assertTrue(burst.continuousShoot)
+        assertEquals(5, burst.count)
+        assertEquals(300, burst.bpm)
+        assertEquals(0.5, burst.minInterval, 0.001)
+    }
+
+    @Test
+    public fun `parser should parse movement_speed`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "movement_speed": { "base": 0.9, "aim": 0.7, "reload": 0.5 }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:moveSpeed")
+        val ms = result.gunData!!.moveSpeed
+        assertEquals(0.9f, ms.baseMultiplier, 0.001f)
+        assertEquals(0.7f, ms.aimMultiplier, 0.001f)
+        assertEquals(0.5f, ms.reloadMultiplier, 0.001f)
+    }
+
+    @Test
+    public fun `parser should parse melee with default sub-block`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "melee": {
+                "distance": 2.0,
+                "cooldown": 0.8,
+                "default": {
+                  "animation_type": "melee_slash",
+                  "distance": 1.5,
+                  "range_angle": 45.0,
+                  "cooldown": 0.5,
+                  "damage": 8.0,
+                  "knockback": 0.3,
+                  "prep": 0.2
+                }
+              }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:melee")
+        val melee = result.gunData!!.melee
+        assertEquals(2.0f, melee.distance, 0.001f)
+        assertEquals(0.8f, melee.cooldownSeconds, 0.001f)
+        assertNotNull(melee.defaultMelee)
+        val dm = melee.defaultMelee!!
+        assertEquals("melee_slash", dm.animationType)
+        assertEquals(1.5f, dm.distance, 0.001f)
+        assertEquals(45.0f, dm.rangeAngle, 0.001f)
+        assertEquals(8.0f, dm.damage, 0.001f)
+        assertEquals(0.3f, dm.knockback, 0.001f)
+        assertEquals(0.2f, dm.prepTimeSeconds, 0.001f)
+    }
+
+    @Test
+    public fun `parser should parse fire_mode_adjust map`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "fire_mode": ["auto", "semi"],
+              "fire_mode_adjust": {
+                "semi": {
+                  "damage": 2.0,
+                  "rpm": 100,
+                  "speed": 0.5,
+                  "knockback": 0.1,
+                  "armor_ignore": 0.05,
+                  "head_shot_multiplier": 0.5,
+                  "aim_inaccuracy": -0.3,
+                  "other_inaccuracy": 0.2
+                },
+                "auto": {
+                  "damage": -1.0
+                }
+              }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:fma")
+        val fma = result.gunData!!.fireModeAdjust
+        assertEquals(2, fma.size)
+        val semi = fma["SEMI"]!!
+        assertEquals(2.0f, semi.damageAmount, 0.001f)
+        assertEquals(100, semi.roundsPerMinute)
+        assertEquals(0.5f, semi.speed, 0.001f)
+        assertEquals(0.1f, semi.knockback, 0.001f)
+        assertEquals(0.05f, semi.armorIgnore, 0.001f)
+        assertEquals(0.5f, semi.headShotMultiplier, 0.001f)
+        assertEquals(-0.3f, semi.aimInaccuracy, 0.001f)
+        assertEquals(0.2f, semi.otherInaccuracy, 0.001f)
+        val auto = fma["AUTO"]!!
+        assertEquals(-1.0f, auto.damageAmount, 0.001f)
+        assertEquals(0, auto.roundsPerMinute)
+    }
+
+    @Test
+    public fun `parser should produce defaults when optional blocks absent`() {
+        val json = """
+            {
+              "ammo": "tacz:9mm",
+              "bullet": { "damage": 5.0, "speed": 3.0 }
+            }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:defaults")
+        val g = result.gunData!!
+        assertFalse(g.bullet.ignite.entity)
+        assertFalse(g.bullet.ignite.block)
+        assertEquals(0f, g.bullet.knockback, 0.001f)
+        assertEquals(-1, g.bullet.tracerCountInterval)
+        assertNull(g.bullet.explosion)
+        assertFalse(g.burstData.continuousShoot)
+        assertEquals(0f, g.moveSpeed.baseMultiplier, 0.001f)
+        assertEquals(1f, g.melee.distance, 0.001f)
+        assertNull(g.melee.defaultMelee)
+        assertTrue(g.fireModeAdjust.isEmpty())
+    }
 }
