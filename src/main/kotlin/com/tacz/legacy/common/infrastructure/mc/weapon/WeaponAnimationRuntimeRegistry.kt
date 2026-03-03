@@ -18,6 +18,36 @@ public enum class WeaponAnimationClipType {
     BOLT
 }
 
+public enum class WeaponAnimationRuntimeEventType {
+    SHELL_EJECT
+}
+
+public data class WeaponAnimationRuntimeEvent(
+    val sequence: Long,
+    val type: WeaponAnimationRuntimeEventType,
+    val clip: WeaponAnimationClipType,
+    val emittedAtMillis: Long
+)
+
+public data class WeaponAnimationShellEjectPlan(
+    val fireTriggerMillis: Long? = 0L,
+    val reloadTriggerMillis: Long? = null,
+    val boltTriggerMillis: Long? = null
+) {
+    public fun normalized(): WeaponAnimationShellEjectPlan = WeaponAnimationShellEjectPlan(
+        fireTriggerMillis = fireTriggerMillis?.coerceAtLeast(0L),
+        reloadTriggerMillis = reloadTriggerMillis?.coerceAtLeast(0L),
+        boltTriggerMillis = boltTriggerMillis?.coerceAtLeast(0L)
+    )
+
+    public fun triggerForClip(clip: WeaponAnimationClipType): Long? = when (clip) {
+        WeaponAnimationClipType.FIRE -> fireTriggerMillis
+        WeaponAnimationClipType.RELOAD -> reloadTriggerMillis
+        WeaponAnimationClipType.BOLT -> boltTriggerMillis
+        else -> null
+    }
+}
+
 public data class WeaponAnimationRuntimeSnapshot(
     val sessionId: String,
     val gunId: String,
@@ -25,7 +55,8 @@ public data class WeaponAnimationRuntimeSnapshot(
     val progress: Float,
     val elapsedMillis: Long,
     val durationMillis: Long,
-    val lastUpdatedAtMillis: Long
+    val lastUpdatedAtMillis: Long,
+    val transientEvents: List<WeaponAnimationRuntimeEvent> = emptyList()
 )
 
 public object WeaponAnimationRuntimeRegistry {
@@ -39,6 +70,8 @@ public object WeaponAnimationRuntimeRegistry {
         result: WeaponBehaviorResult,
         clipDurationOverridesMillis: Map<WeaponAnimationClipType, Long> = emptyMap(),
         reloadTicks: Int? = null,
+        preferBoltCycleAfterFire: Boolean = false,
+        shellEjectPlan: WeaponAnimationShellEjectPlan = WeaponAnimationShellEjectPlan(),
         nowMillis: Long = System.currentTimeMillis()
     ) {
         val normalizedGunId = gunId.trim().lowercase()
@@ -49,16 +82,30 @@ public object WeaponAnimationRuntimeRegistry {
 
         val track = tracksBySessionId[sessionId]
         val current = if (track == null || track.gunId != normalizedGunId) {
+            val normalizedPlan = shellEjectPlan.normalized()
             SessionTrack(
                 gunId = normalizedGunId,
                 clip = WeaponAnimationClipType.IDLE,
                 clipStartedAtMillis = nowMillis,
                 clipDurationMillis = 0L,
                 lastUpdatedAtMillis = nowMillis,
-                reloadProgressHint = null
+                reloadProgressHint = null,
+                preferBoltCycleAfterFire = preferBoltCycleAfterFire,
+                boltClipDurationMillisHint = resolveBoltClipDurationHint(clipDurationOverridesMillis),
+                shellEjectPlan = normalizedPlan,
+                shellEjectTriggerMillisForCurrentClip = normalizedPlan.triggerForClip(WeaponAnimationClipType.IDLE),
+                shellEjectEmittedForCurrentClip = false,
+                nextEventSequence = 0L,
+                pendingTransientEvents = mutableListOf()
             )
         } else {
             track
+        }
+        current.preferBoltCycleAfterFire = preferBoltCycleAfterFire
+        current.boltClipDurationMillisHint = resolveBoltClipDurationHint(clipDurationOverridesMillis)
+        current.shellEjectPlan = shellEjectPlan.normalized()
+        if (!current.shellEjectEmittedForCurrentClip) {
+            current.shellEjectTriggerMillisForCurrentClip = current.shellEjectPlan.triggerForClip(current.clip)
         }
 
         val step = result.step
@@ -95,11 +142,17 @@ public object WeaponAnimationRuntimeRegistry {
                 durationMillis = 0L
             )
         } else if (shouldExpireTransientClip(current, nowMillis)) {
+            val nextClip = resolveClipOnTransientExpire(current)
             switchClip(
                 track = current,
-                clip = WeaponAnimationClipType.IDLE,
+                clip = nextClip,
                 nowMillis = nowMillis,
-                durationMillis = 0L
+                durationMillis = resolveClipDurationMillis(
+                    clip = nextClip,
+                    clipDurationOverridesMillis = clipDurationOverridesMillis,
+                    reloadTicks = reloadTicks,
+                    reloadTicksRemaining = step.snapshot.reloadTicksRemaining
+                )
             )
         }
 
@@ -113,6 +166,9 @@ public object WeaponAnimationRuntimeRegistry {
             null
         }
 
+        maybeEmitShellEjectEvent(current, nowMillis)
+        pruneExpiredTransientEvents(current, nowMillis)
+
         tracksBySessionId[sessionId] = current
     }
 
@@ -121,13 +177,20 @@ public object WeaponAnimationRuntimeRegistry {
         val track = tracksBySessionId[sessionId] ?: return null
 
         if (shouldExpireTransientClip(track, nowMillis)) {
+            val nextClip = resolveClipOnTransientExpire(track)
             switchClip(
                 track = track,
-                clip = WeaponAnimationClipType.IDLE,
+                clip = nextClip,
                 nowMillis = nowMillis,
-                durationMillis = 0L
+                durationMillis = when (nextClip) {
+                    WeaponAnimationClipType.BOLT -> track.boltClipDurationMillisHint
+                    else -> 0L
+                }
             )
         }
+
+        maybeEmitShellEjectEvent(track, nowMillis)
+        pruneExpiredTransientEvents(track, nowMillis)
 
         val elapsed = (nowMillis - track.clipStartedAtMillis).coerceAtLeast(0L)
         val progress = when {
@@ -145,7 +208,8 @@ public object WeaponAnimationRuntimeRegistry {
             progress = progress,
             elapsedMillis = elapsed,
             durationMillis = track.clipDurationMillis,
-            lastUpdatedAtMillis = track.lastUpdatedAtMillis
+            lastUpdatedAtMillis = track.lastUpdatedAtMillis,
+            transientEvents = track.pendingTransientEvents.toList()
         )
     }
 
@@ -208,7 +272,64 @@ public object WeaponAnimationRuntimeRegistry {
         if (clip != WeaponAnimationClipType.RELOAD) {
             track.reloadProgressHint = null
         }
+        track.shellEjectTriggerMillisForCurrentClip = track.shellEjectPlan.triggerForClip(clip)
+        track.shellEjectEmittedForCurrentClip = false
     }
+
+    private fun maybeEmitShellEjectEvent(track: SessionTrack, nowMillis: Long) {
+        val trigger = track.shellEjectTriggerMillisForCurrentClip ?: return
+        if (track.shellEjectEmittedForCurrentClip) {
+            return
+        }
+
+        val elapsed = (nowMillis - track.clipStartedAtMillis).coerceAtLeast(0L)
+        if (elapsed < trigger) {
+            return
+        }
+
+        val sequence = track.nextEventSequence + 1L
+        track.nextEventSequence = sequence
+        track.pendingTransientEvents += WeaponAnimationRuntimeEvent(
+            sequence = sequence,
+            type = WeaponAnimationRuntimeEventType.SHELL_EJECT,
+            clip = track.clip,
+            emittedAtMillis = nowMillis
+        )
+        if (track.pendingTransientEvents.size > MAX_TRANSIENT_EVENTS_PER_SESSION) {
+            val overflow = track.pendingTransientEvents.size - MAX_TRANSIENT_EVENTS_PER_SESSION
+            repeat(overflow) {
+                track.pendingTransientEvents.removeAt(0)
+            }
+        }
+        track.shellEjectEmittedForCurrentClip = true
+    }
+
+    private fun pruneExpiredTransientEvents(track: SessionTrack, nowMillis: Long) {
+        if (track.pendingTransientEvents.isEmpty()) {
+            return
+        }
+        val minAliveAt = nowMillis - TRANSIENT_EVENT_RETAIN_MILLIS
+        val iter = track.pendingTransientEvents.iterator()
+        while (iter.hasNext()) {
+            val event = iter.next()
+            if (event.emittedAtMillis < minAliveAt) {
+                iter.remove()
+            }
+        }
+    }
+
+    private fun resolveClipOnTransientExpire(track: SessionTrack): WeaponAnimationClipType {
+        if (track.clip == WeaponAnimationClipType.FIRE && track.preferBoltCycleAfterFire) {
+            return WeaponAnimationClipType.BOLT
+        }
+        return WeaponAnimationClipType.IDLE
+    }
+
+    private fun resolveBoltClipDurationHint(
+        clipDurationOverridesMillis: Map<WeaponAnimationClipType, Long>
+    ): Long = clipDurationOverridesMillis[WeaponAnimationClipType.BOLT]
+        ?.takeIf { it > 0L }
+        ?: BOLT_CLIP_DURATION_MS
 
     private fun shouldExpireTransientClip(track: SessionTrack, nowMillis: Long): Boolean {
         if (track.clip == WeaponAnimationClipType.IDLE ||
@@ -269,7 +390,14 @@ public object WeaponAnimationRuntimeRegistry {
         var clipStartedAtMillis: Long,
         var clipDurationMillis: Long,
         var lastUpdatedAtMillis: Long,
-        var reloadProgressHint: Float?
+        var reloadProgressHint: Float?,
+        var preferBoltCycleAfterFire: Boolean,
+        var boltClipDurationMillisHint: Long,
+        var shellEjectPlan: WeaponAnimationShellEjectPlan,
+        var shellEjectTriggerMillisForCurrentClip: Long?,
+        var shellEjectEmittedForCurrentClip: Boolean,
+        var nextEventSequence: Long,
+        val pendingTransientEvents: MutableList<WeaponAnimationRuntimeEvent>
     )
 
     private const val MILLIS_PER_TICK: Long = 50L
@@ -283,4 +411,6 @@ public object WeaponAnimationRuntimeRegistry {
     private const val AIM_CLIP_DURATION_MS: Long = 300L
     private const val BOLT_CLIP_DURATION_MS: Long = 220L
     private const val DEFAULT_RELOAD_TICKS: Int = 20
+    private const val TRANSIENT_EVENT_RETAIN_MILLIS: Long = 1_200L
+    private const val MAX_TRANSIENT_EVENTS_PER_SESSION: Int = 16
 }

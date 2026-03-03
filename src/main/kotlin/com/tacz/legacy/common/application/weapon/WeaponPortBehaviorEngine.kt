@@ -2,6 +2,7 @@ package com.tacz.legacy.common.application.weapon
 
 import com.tacz.legacy.common.application.port.AudioPort
 import com.tacz.legacy.common.application.port.BulletCreationRequest
+import com.tacz.legacy.common.application.port.DistanceDamagePairDto
 import com.tacz.legacy.common.application.port.ParticlePort
 import com.tacz.legacy.common.application.port.ParticleRequest
 import com.tacz.legacy.common.application.port.RaycastHit
@@ -44,6 +45,9 @@ public data class WeaponBehaviorConfig(
     val bulletPierce: Int = 1,
     val bulletPelletCount: Int = 1,
     val bulletInaccuracyDegrees: Float = 0.0f,
+    val bulletArmorIgnore: Float = 0f,
+    val bulletHeadShotMultiplier: Float = 1f,
+    val bulletDamageAdjust: List<DistanceDamagePairDto> = emptyList(),
     val fireSoundPitchBase: Float = 1.0f,
     val fireSoundPitchJitter: Float = 0.0f
 )
@@ -186,7 +190,10 @@ public class WeaponPortBehaviorEngine(
                     damage = config.bulletDamage,
                     maxLifetimeTicks = config.bulletLifeTicks,
                     pierce = config.bulletPierce,
-                    inaccuracyDegrees = config.bulletInaccuracyDegrees
+                    inaccuracyDegrees = config.bulletInaccuracyDegrees,
+                    armorIgnore = config.bulletArmorIgnore,
+                    headShotMultiplier = config.bulletHeadShotMultiplier,
+                    damageAdjust = config.bulletDamageAdjust
                 )
             )
             if (firstBulletEntityId == null) {

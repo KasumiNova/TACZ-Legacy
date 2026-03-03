@@ -166,7 +166,12 @@ internal class MinecraftWorldPort(
                 gravity = request.gravity,
                 friction = request.friction,
                 pierce = request.pierce,
-                lifetimeTicks = request.maxLifetimeTicks
+                lifetimeTicks = request.maxLifetimeTicks,
+                armorIgnore = request.armorIgnore,
+                headShotMultiplier = request.headShotMultiplier,
+                damageAdjust = request.damageAdjust.map {
+                    LegacyBulletEntity.DamagePair(distance = it.distance, damage = it.damage)
+                }
             )
             shoot(
                 normalizedDirection.x,

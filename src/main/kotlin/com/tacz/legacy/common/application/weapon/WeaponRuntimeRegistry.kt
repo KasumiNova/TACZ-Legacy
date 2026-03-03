@@ -11,7 +11,8 @@ public data class WeaponDefinition(
     val sourceId: String,
     val gunId: String,
     val spec: com.tacz.legacy.common.domain.weapon.WeaponSpec,
-    val ballistics: WeaponBallistics
+    val ballistics: WeaponBallistics,
+    val scriptParams: Map<String, Float> = emptyMap()
 )
 
 public data class WeaponBallistics(
@@ -22,7 +23,15 @@ public data class WeaponBallistics(
     val lifetimeTicks: Int,
     val pierce: Int,
     val pelletCount: Int,
-    val inaccuracy: WeaponInaccuracyProfile = WeaponInaccuracyProfile()
+    val inaccuracy: WeaponInaccuracyProfile = WeaponInaccuracyProfile(),
+    val armorIgnore: Float = 0f,
+    val headShotMultiplier: Float = 1f,
+    val damageAdjust: List<WeaponDistanceDamagePair> = emptyList()
+)
+
+public data class WeaponDistanceDamagePair(
+    val distance: Float,
+    val damage: Float
 )
 
 public data class WeaponInaccuracyProfile(
@@ -101,14 +110,20 @@ public class WeaponRuntimeRegistry(
                             sneak = data.inaccuracy.sneak.coerceAtLeast(0.0f),
                             lie = data.inaccuracy.lie.coerceAtLeast(0.0f),
                             aim = data.inaccuracy.aim.coerceAtLeast(0.0f)
-                        )
+                        ),
+                        armorIgnore = data.bullet.extraDamage.armorIgnore.coerceIn(0f, 1f),
+                        headShotMultiplier = data.bullet.extraDamage.headShotMultiplier.coerceAtLeast(0f),
+                        damageAdjust = data.bullet.extraDamage.damageAdjust.map {
+                            WeaponDistanceDamagePair(distance = it.distance, damage = it.damage)
+                        }
                     )
 
                     definitionsByGunId[gunId] = WeaponDefinition(
                         sourceId = sourceId,
                         gunId = gunId,
                         spec = spec,
-                        ballistics = ballistics
+                            ballistics = ballistics,
+                            scriptParams = data.scriptParams
                     )
                 }.onFailure {
                     failedGunIds += gunId
@@ -235,7 +250,7 @@ public class WeaponRuntimeRegistry(
 
     private fun buildFallbackDefinition(gunId: String): WeaponDefinition {
         return WeaponDefinition(
-            sourceId = "runtime:fallback/$gunId",
+            sourceId = "$FALLBACK_SOURCE_ID_PREFIX$gunId",
             gunId = gunId,
             spec = WeaponSpec(
                 magazineSize = FALLBACK_MAGAZINE_SIZE,
@@ -275,6 +290,7 @@ public object WeaponRuntime {
 
 private const val TICKS_PER_SECOND: Float = 20.0f
 private const val MIN_PROJECTILE_SPEED_PER_TICK: Float = 0.01f
+private const val FALLBACK_SOURCE_ID_PREFIX: String = "runtime:fallback/"
 private const val FALLBACK_MAGAZINE_SIZE: Int = 30
 private const val FALLBACK_RPM: Int = 600
 private const val FALLBACK_RELOAD_TICKS: Int = 40

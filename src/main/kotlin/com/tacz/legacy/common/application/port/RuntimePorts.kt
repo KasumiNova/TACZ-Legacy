@@ -80,7 +80,15 @@ public data class BulletCreationRequest(
     val damage: Float,
     val maxLifetimeTicks: Int,
     val pierce: Int = 1,
-    val inaccuracyDegrees: Float = 0.0f
+    val inaccuracyDegrees: Float = 0.0f,
+    val armorIgnore: Float = 0f,
+    val headShotMultiplier: Float = 1f,
+    val damageAdjust: List<DistanceDamagePairDto> = emptyList()
+)
+
+public data class DistanceDamagePairDto(
+    val distance: Float,
+    val damage: Float
 )
 
 public interface WorldPort {

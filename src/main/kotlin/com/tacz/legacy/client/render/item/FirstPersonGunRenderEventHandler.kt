@@ -46,16 +46,22 @@ public class FirstPersonGunRenderEventHandler {
         // 仅处理主手枪械
         if (stack.isEmpty || stack.item !is LegacyGunItem) {
             LegacyGunItemStackRenderer.notifyFirstPersonGunContextSuspended(player.uniqueID.toString())
+            FirstPersonShellEjectRenderer.notifyContextSuspended(player.uniqueID.toString())
+            FirstPersonTracerRenderer.notifyContextSuspended(player.uniqueID.toString())
             return
         }
 
         if (!customMainHandRenderEnabled) {
             LegacyGunItemStackRenderer.notifyFirstPersonGunContextSuspended(player.uniqueID.toString())
+            FirstPersonShellEjectRenderer.notifyContextSuspended(player.uniqueID.toString())
+            FirstPersonTracerRenderer.notifyContextSuspended(player.uniqueID.toString())
             return
         }
 
         if (!LegacyGunItemStackRenderer.canRenderFirstPerson(stack, minecraft)) {
             LegacyGunItemStackRenderer.notifyFirstPersonGunContextSuspended(player.uniqueID.toString())
+            FirstPersonShellEjectRenderer.notifyContextSuspended(player.uniqueID.toString())
+            FirstPersonTracerRenderer.notifyContextSuspended(player.uniqueID.toString())
             return
         }
 
@@ -81,6 +87,16 @@ public class FirstPersonGunRenderEventHandler {
 
             LegacyGunItemStackRenderer.renderFirstPerson(stack, event.partialTicks)
             FirstPersonMuzzleFlashRenderer.renderForPlayer(
+                player = player,
+                itemStack = stack,
+                partialTicks = event.partialTicks
+            )
+            FirstPersonShellEjectRenderer.renderForPlayer(
+                player = player,
+                itemStack = stack,
+                partialTicks = event.partialTicks
+            )
+            FirstPersonTracerRenderer.renderForPlayer(
                 player = player,
                 itemStack = stack,
                 partialTicks = event.partialTicks

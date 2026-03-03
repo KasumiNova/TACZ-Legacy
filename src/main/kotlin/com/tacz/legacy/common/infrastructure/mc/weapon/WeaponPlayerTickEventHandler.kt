@@ -1,8 +1,11 @@
 package com.tacz.legacy.common.infrastructure.mc.weapon
 
+import com.tacz.legacy.common.application.port.DistanceDamagePairDto
 import com.tacz.legacy.common.application.port.Vec3d
 import com.tacz.legacy.common.application.gunpack.GunDisplayDefinition
 import com.tacz.legacy.common.application.gunpack.GunDisplayRuntime
+import com.tacz.legacy.common.application.gunpack.GunDisplayStateMachineSemantics
+import com.tacz.legacy.common.application.gunpack.ShellEjectTimingProfile
 import com.tacz.legacy.common.application.weapon.WeaponAutoSessionOrchestrator
 import com.tacz.legacy.common.application.weapon.WeaponBehaviorConfig
 import com.tacz.legacy.common.application.weapon.WeaponBehaviorResult
@@ -74,7 +77,9 @@ public class WeaponPlayerTickEventHandler(
             gunId = gunId,
             behaviorResult = tickResult,
             clipDurationOverridesMillis = behaviorContext.animationClipDurationsMillis,
-            reloadTicks = behaviorContext.reloadTicks
+            reloadTicks = behaviorContext.reloadTicks,
+            preferBoltCycleAfterFire = behaviorContext.preferBoltCycleAfterFire,
+            shellEjectPlan = behaviorContext.shellEjectPlan
         )
 
         syncAuthoritativeSessionIfNeeded(player, sessionId)
@@ -168,7 +173,9 @@ public class WeaponPlayerTickEventHandler(
             gunId = gunId,
             behaviorResult = result,
             clipDurationOverridesMillis = behaviorContext.animationClipDurationsMillis,
-            reloadTicks = behaviorContext.reloadTicks
+            reloadTicks = behaviorContext.reloadTicks,
+            preferBoltCycleAfterFire = behaviorContext.preferBoltCycleAfterFire,
+            shellEjectPlan = behaviorContext.shellEjectPlan
         )
         return result
     }
@@ -183,13 +190,20 @@ public class WeaponPlayerTickEventHandler(
                 ResolvedBehaviorContext(
                     config = config,
                     reloadTicks = null,
-                    animationClipDurationsMillis = emptyMap()
+                    animationClipDurationsMillis = emptyMap(),
+                    preferBoltCycleAfterFire = false,
+                    shellEjectPlan = WeaponAnimationShellEjectPlan()
                 )
             }
 
         val fallback = WeaponBehaviorConfig()
         val weaponDefinition = WeaponRuntime.registry().snapshot().findDefinition(normalizedGunId)
         val displayDefinition = GunDisplayRuntime.registry().snapshot().findDefinition(normalizedGunId)
+        val gunScriptParams = weaponDefinition?.scriptParams.orEmpty()
+        val preferBoltCycleAfterFire = shouldPreferBoltCycleAfterFire(
+            displayDefinition = displayDefinition,
+            gunScriptParams = gunScriptParams
+        )
         val inaccuracyDegrees = resolveBulletInaccuracyDegrees(
             player = player,
             sessionId = sessionId,
@@ -198,6 +212,7 @@ public class WeaponPlayerTickEventHandler(
         )
 
         return ResolvedBehaviorContext(
+            preferBoltCycleAfterFire = preferBoltCycleAfterFire,
             config = fallback.copy(
                 shootSoundId = displayDefinition?.shootSoundId ?: fallback.shootSoundId,
                 dryFireSoundId = displayDefinition?.dryFireSoundId ?: fallback.dryFireSoundId,
@@ -214,10 +229,48 @@ public class WeaponPlayerTickEventHandler(
                 bulletPierce = weaponDefinition?.ballistics?.pierce ?: fallback.bulletPierce,
                 bulletPelletCount = weaponDefinition?.ballistics?.pelletCount ?: fallback.bulletPelletCount,
                 bulletInaccuracyDegrees = inaccuracyDegrees,
+                bulletArmorIgnore = weaponDefinition?.ballistics?.armorIgnore ?: fallback.bulletArmorIgnore,
+                bulletHeadShotMultiplier = weaponDefinition?.ballistics?.headShotMultiplier ?: fallback.bulletHeadShotMultiplier,
+                bulletDamageAdjust = weaponDefinition?.ballistics?.damageAdjust?.map {
+                    DistanceDamagePairDto(distance = it.distance, damage = it.damage)
+                } ?: fallback.bulletDamageAdjust,
                 fireSoundPitchJitter = FIRE_SOUND_PITCH_JITTER
             ),
             reloadTicks = weaponDefinition?.spec?.reloadTicks,
-            animationClipDurationsMillis = resolveAnimationClipDurationOverrides(displayDefinition)
+            animationClipDurationsMillis = resolveAnimationClipDurationOverrides(displayDefinition),
+            shellEjectPlan = resolveShellEjectPlan(
+                displayDefinition = displayDefinition,
+                gunScriptParams = gunScriptParams
+            )
+        )
+    }
+
+    private fun resolveShellEjectPlan(
+        displayDefinition: GunDisplayDefinition?,
+        gunScriptParams: Map<String, Float>
+    ): WeaponAnimationShellEjectPlan {
+        val timingProfile: ShellEjectTimingProfile = GunDisplayStateMachineSemantics.resolveShellEjectTimingProfile(
+            displayDefinition = displayDefinition,
+            gunScriptParams = gunScriptParams
+        )
+        return WeaponAnimationShellEjectPlan(
+            fireTriggerMillis = timingProfile.fireTriggerMillis,
+            reloadTriggerMillis = timingProfile.reloadTriggerMillis,
+            boltTriggerMillis = timingProfile.boltTriggerMillis
+        )
+    }
+
+    internal fun shouldPreferBoltCycleAfterFire(displayDefinition: GunDisplayDefinition?): Boolean {
+        return shouldPreferBoltCycleAfterFire(displayDefinition, emptyMap())
+    }
+
+    internal fun shouldPreferBoltCycleAfterFire(
+        displayDefinition: GunDisplayDefinition?,
+        gunScriptParams: Map<String, Float>
+    ): Boolean {
+        return GunDisplayStateMachineSemantics.shouldPreferBoltCycleAfterFire(
+            displayDefinition = displayDefinition,
+            gunScriptParams = gunScriptParams
         )
     }
 
@@ -417,7 +470,9 @@ public class WeaponPlayerTickEventHandler(
         gunId: String?,
         behaviorResult: WeaponBehaviorResult?,
         clipDurationOverridesMillis: Map<WeaponAnimationClipType, Long>,
-        reloadTicks: Int?
+        reloadTicks: Int?,
+        preferBoltCycleAfterFire: Boolean,
+        shellEjectPlan: WeaponAnimationShellEjectPlan
     ) {
         if (!worldIsRemote) {
             return
@@ -435,7 +490,9 @@ public class WeaponPlayerTickEventHandler(
             gunId = normalizedGunId,
             result = result,
             clipDurationOverridesMillis = clipDurationOverridesMillis,
-            reloadTicks = reloadTicks
+            reloadTicks = reloadTicks,
+            preferBoltCycleAfterFire = preferBoltCycleAfterFire,
+            shellEjectPlan = shellEjectPlan
         )
     }
 
@@ -547,7 +604,9 @@ public class WeaponPlayerTickEventHandler(
     private data class ResolvedBehaviorContext(
         val config: WeaponBehaviorConfig,
         val reloadTicks: Int?,
-        val animationClipDurationsMillis: Map<WeaponAnimationClipType, Long>
+        val animationClipDurationsMillis: Map<WeaponAnimationClipType, Long>,
+        val preferBoltCycleAfterFire: Boolean,
+        val shellEjectPlan: WeaponAnimationShellEjectPlan
     )
 
     private companion object {

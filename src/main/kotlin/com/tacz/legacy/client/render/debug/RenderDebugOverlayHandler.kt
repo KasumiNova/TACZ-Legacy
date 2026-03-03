@@ -4,7 +4,6 @@ import com.tacz.legacy.client.render.RenderPipelineRuntime
 import com.tacz.legacy.client.render.frame.FramePhase
 import com.tacz.legacy.client.render.weapon.WeaponVisualSampleRegistry
 import com.tacz.legacy.common.application.gunpack.GunDisplayRuntime
-import com.tacz.legacy.common.domain.weapon.WeaponSnapshot
 import com.tacz.legacy.common.application.weapon.WeaponRuntime
 import com.tacz.legacy.common.infrastructure.mc.network.WeaponSessionSyncClientRegistry
 import com.tacz.legacy.common.infrastructure.mc.weapon.WeaponRuntimeMcBridge
@@ -138,7 +137,10 @@ public class RenderDebugOverlayHandler {
             }
         } else {
             val syncedSnapshot = synced.snapshot
-            val driftFields = countSnapshotDriftFields(local = snapshot, authoritative = syncedSnapshot)
+            val driftFields = WeaponConsistencyDiagnostics.countSnapshotDriftFields(
+                local = snapshot,
+                authoritative = syncedSnapshot
+            )
             val syncAgeMs = (System.currentTimeMillis() - synced.syncedAtEpochMillis).coerceAtLeast(0L)
             val ackSequence = receipt?.ackSequenceId ?: synced.ackSequenceId
             val correctionReason = receipt?.correctionReason ?: synced.correctionReason
@@ -152,6 +154,7 @@ public class RenderDebugOverlayHandler {
         if (animationSnapshot == null) {
             left += "[WeaponAnim] clip=none"
         } else {
+            WeaponConsistencyDiagnostics.observeAnimationSnapshot(localSessionId, animationSnapshot)
             val progressPercent = String.format(Locale.ROOT, "%.0f", animationSnapshot.progress * 100f)
             left += "[WeaponAnim] clip=${animationSnapshot.clip.name} progress=${progressPercent}% elapsed=${animationSnapshot.elapsedMillis}ms dur=${animationSnapshot.durationMillis}ms"
         }
@@ -179,25 +182,30 @@ public class RenderDebugOverlayHandler {
 
         left += "[WeaponVisual] fp=${visualSample.firstPersonModelPath} tp=${visualSample.thirdPersonModelPath}"
         left += "[WeaponVisual] anim[idle=${visualSample.idleAnimationPath} fire=${visualSample.fireAnimationPath} reload=${visualSample.reloadAnimationPath}]"
+
+        appendWeaponConsistencyDiagnostics(left, localSessionId)
+    }
+
+    private fun appendWeaponConsistencyDiagnostics(left: MutableList<String>, localSessionId: String) {
+        val diagnostics = WeaponConsistencyDiagnostics.snapshot(localSessionId) ?: return
+        val transition = diagnostics.lastTransition ?: "none"
+        left += "[WeaponDiag] transitions=${diagnostics.transitionTotal} last=$transition shellEvents=${diagnostics.shellEventsObserved}"
+        left += "[WeaponDiag] shellSpawn fp[event=${diagnostics.firstPersonEventSpawnCount} fallback=${diagnostics.firstPersonFallbackSpawnCount}] tp[event=${diagnostics.thirdPersonEventSpawnCount} fallback=${diagnostics.thirdPersonFallbackSpawnCount}]"
+
+        val reasonSummary = diagnostics.correctionReasonCounts
+            .entries
+            .sortedByDescending { entry -> entry.value }
+            .take(3)
+            .joinToString(separator = ",") { entry ->
+                "${entry.key.name.lowercase()}:${entry.value}"
+            }
+            .ifBlank { "none" }
+        left += "[WeaponDiag] drift samples=${diagnostics.driftSampleCount} detected=${diagnostics.driftDetectedCount} last=${diagnostics.driftLastFields} max=${diagnostics.driftMaxFields} reasons=$reasonSummary"
     }
 
     private fun formatNsToMs(ns: Long): String {
         val ms = ns / 1_000_000.0
         return String.format("%.3fms", ms)
-    }
-
-    private fun countSnapshotDriftFields(local: WeaponSnapshot, authoritative: WeaponSnapshot): Int {
-        var mismatch = 0
-        if (local.state != authoritative.state) mismatch += 1
-        if (local.ammoInMagazine != authoritative.ammoInMagazine) mismatch += 1
-        if (local.ammoReserve != authoritative.ammoReserve) mismatch += 1
-        if (local.isTriggerHeld != authoritative.isTriggerHeld) mismatch += 1
-        if (local.reloadTicksRemaining != authoritative.reloadTicksRemaining) mismatch += 1
-        if (local.cooldownTicksRemaining != authoritative.cooldownTicksRemaining) mismatch += 1
-        if (local.semiLocked != authoritative.semiLocked) mismatch += 1
-        if (local.burstShotsRemaining != authoritative.burstShotsRemaining) mismatch += 1
-        if (local.totalShotsFired != authoritative.totalShotsFired) mismatch += 1
-        return mismatch
     }
 
 }

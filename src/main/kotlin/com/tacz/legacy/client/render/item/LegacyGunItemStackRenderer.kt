@@ -3,7 +3,6 @@ package com.tacz.legacy.client.render.item
 import com.tacz.legacy.client.render.texture.TaczTextureResourceResolver
 import com.tacz.legacy.client.sound.TaczSoundEngine
 import com.tacz.legacy.client.input.WeaponAimInputStateRegistry
-import com.tacz.legacy.client.render.camera.WeaponFovController
 import com.tacz.legacy.common.application.gunpack.GunDisplayDefinition
 import com.tacz.legacy.common.application.gunpack.GunDisplayRuntime
 import com.tacz.legacy.common.application.gunpack.GunPackRuntime
@@ -336,11 +335,6 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         val preferLeftHandPos = normalizedNames.contains(HAND_BONE_LEFT_POS)
         val preferRightHandPos = normalizedNames.contains(HAND_BONE_RIGHT_POS)
         val referenceOffsetCollector = if (firstPerson) linkedMapOf<String, FirstPersonReferenceOffset>() else null
-        val depthCompensationScale = if (firstPerson) {
-            WeaponFovController.currentDepthCompensationScale()
-        } else {
-            1f
-        }
 
         GlStateManager.pushMatrix()
 
@@ -396,8 +390,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
                 preferLeftHandPos = preferLeftHandPos,
                 preferRightHandPos = preferRightHandPos,
                 hiddenByAncestor = false,
-                referenceOffsetCollector = referenceOffsetCollector,
-                depthCompensationScale = depthCompensationScale
+                referenceOffsetCollector = referenceOffsetCollector
             )
         }
 
@@ -1504,8 +1497,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         preferLeftHandPos: Boolean,
         preferRightHandPos: Boolean,
         hiddenByAncestor: Boolean,
-        referenceOffsetCollector: MutableMap<String, FirstPersonReferenceOffset>?,
-        depthCompensationScale: Float
+        referenceOffsetCollector: MutableMap<String, FirstPersonReferenceOffset>?
     ) {
         if (depth > MAX_BONE_DEPTH) {
             return
@@ -1532,8 +1524,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
 
         captureReferenceOffsetIfPresent(
             boneName = bone.name,
-            collector = referenceOffsetCollector,
-            depthCompensationScale = depthCompensationScale
+            collector = referenceOffsetCollector
         )
 
         renderHandByBoneAnchor(
@@ -1573,8 +1564,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
                     preferLeftHandPos = preferLeftHandPos,
                     preferRightHandPos = preferRightHandPos,
                     hiddenByAncestor = nextHiddenByAncestor,
-                    referenceOffsetCollector = referenceOffsetCollector,
-                    depthCompensationScale = depthCompensationScale
+                    referenceOffsetCollector = referenceOffsetCollector
                 )
             }
 
@@ -1697,8 +1687,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
 
     private fun captureReferenceOffsetIfPresent(
         boneName: String,
-        collector: MutableMap<String, FirstPersonReferenceOffset>?,
-        depthCompensationScale: Float
+        collector: MutableMap<String, FirstPersonReferenceOffset>?
     ) {
         if (collector == null) {
             return
@@ -1712,24 +1701,19 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
             return
         }
 
-        val captured = captureCurrentModelViewOffset(depthCompensationScale)
+        val captured = captureCurrentModelViewOffset()
             ?: return
         collector[normalized] = captured
     }
 
-    private fun captureCurrentModelViewOffset(depthCompensationScale: Float): FirstPersonReferenceOffset? {
-        val scale = depthCompensationScale
-            .takeIf { it.isFinite() }
-            ?.coerceIn(MIN_DEPTH_COMPENSATION_SCALE, MAX_DEPTH_COMPENSATION_SCALE)
-            ?: 1f
-
+    private fun captureCurrentModelViewOffset(): FirstPersonReferenceOffset? {
         val matrix = MODEL_VIEW_MATRIX_BUFFER.get()
         matrix.clear()
         GL11.glGetFloat(GL11.GL_MODELVIEW_MATRIX, matrix)
 
         val x = matrix.get(12)
         val y = matrix.get(13)
-        val z = matrix.get(14) * scale
+        val z = matrix.get(14)
         if (!x.isFinite() || !y.isFinite() || !z.isFinite()) {
             return null
         }
@@ -4390,8 +4374,6 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
     private const val DEFAULT_ANIMATION_SOUND_NAMESPACE: String = "tacz"
     private const val MINECRAFT_NAMESPACE: String = "minecraft"
     private const val ANIMATION_SOUND_REPLAY_GUARD_MILLIS: Long = 20L
-    private const val MIN_DEPTH_COMPENSATION_SCALE: Float = 0.01f
-    private const val MAX_DEPTH_COMPENSATION_SCALE: Float = 100f
     private val REFERENCE_OFFSET_BONE_NAMES: Set<String> = setOf("muzzle_pos", "shell", "muzzle_flash")
     private val MODEL_VIEW_MATRIX_BUFFER: ThreadLocal<FloatBuffer> = ThreadLocal.withInitial {
         BufferUtils.createFloatBuffer(16)

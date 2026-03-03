@@ -454,4 +454,143 @@ public class GunPackCompatibilityParserTest {
         assertTrue(result.report.allIssues().any { it.code == "INVALID_FIELD_VALUE" && it.field == "recoil.pitch[0].time" })
     }
 
+    @Test
+    public fun `parser should parse script param numeric map`() {
+        val json =
+            """
+            {
+              "ammo": "tacz:556",
+              "fire_mode": ["semi"],
+              "script_param": {
+                "bolt_feed_time": 0.12,
+                "shoot_feed_time": 0.24,
+                "BOLT_TIME": 0.33,
+                "invalid": "oops"
+              }
+            }
+            """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:script-param")
+
+        assertNotNull(result.gunData)
+        assertEquals(0.12f, result.gunData?.scriptParams?.get("bolt_feed_time") ?: 0f, 0.0001f)
+        assertEquals(0.24f, result.gunData?.scriptParams?.get("shoot_feed_time") ?: 0f, 0.0001f)
+        assertEquals(0.33f, result.gunData?.scriptParams?.get("bolt_time") ?: 0f, 0.0001f)
+        assertTrue(result.report.allIssues().any { it.code == "INVALID_FIELD_TYPE" && it.field == "script_param.invalid" })
+    }
+
+    @Test
+    public fun `parser should parse extra_damage with distance decay table`() {
+        val json =
+            """
+            {
+              "ammo": "tacz:9mm",
+              "ammo_amount": 30,
+              "bullet": {
+                "damage": 10.0,
+                "speed": 5.0,
+                "extra_damage": {
+                  "armor_ignore": 0.35,
+                  "head_shot_multiplier": 2.5,
+                  "damage_adjust": [
+                    { "distance": 10, "damage": 10.0 },
+                    { "distance": 50, "damage": 7.0 },
+                    { "distance": "infinite", "damage": 3.0 }
+                  ]
+                }
+              }
+            }
+            """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:extra-damage")
+        val gunData = result.gunData
+
+        assertNotNull(gunData)
+        assertFalse(result.report.hasErrors())
+        val extra = gunData!!.bullet.extraDamage
+        assertEquals(0.35f, extra.armorIgnore, 0.0001f)
+        assertEquals(2.5f, extra.headShotMultiplier, 0.0001f)
+        assertEquals(3, extra.damageAdjust.size)
+        assertEquals(10.0f, extra.damageAdjust[0].distance, 0.0001f)
+        assertEquals(10.0f, extra.damageAdjust[0].damage, 0.0001f)
+        assertEquals(50.0f, extra.damageAdjust[1].distance, 0.0001f)
+        assertEquals(7.0f, extra.damageAdjust[1].damage, 0.0001f)
+        assertEquals(Float.MAX_VALUE, extra.damageAdjust[2].distance, 0.0001f)
+        assertEquals(3.0f, extra.damageAdjust[2].damage, 0.0001f)
+    }
+
+    @Test
+    public fun `parser should default extra_damage when section is missing`() {
+        val json =
+            """
+            {
+              "ammo": "tacz:9mm",
+              "ammo_amount": 30,
+              "bullet": {
+                "damage": 10.0,
+                "speed": 5.0
+              }
+            }
+            """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:no-extra")
+        val gunData = result.gunData
+
+        assertNotNull(gunData)
+        val extra = gunData!!.bullet.extraDamage
+        assertEquals(0f, extra.armorIgnore, 0.0001f)
+        assertEquals(1f, extra.headShotMultiplier, 0.0001f)
+        assertTrue(extra.damageAdjust.isEmpty())
+    }
+
+    @Test
+    public fun `parser should clamp armor_ignore to 0-1 range`() {
+        val json =
+            """
+            {
+              "ammo": "tacz:9mm",
+              "ammo_amount": 30,
+              "bullet": {
+                "damage": 10.0,
+                "speed": 5.0,
+                "extra_damage": {
+                  "armor_ignore": 1.5,
+                  "head_shot_multiplier": -1.0
+                }
+              }
+            }
+            """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:clamp")
+        val extra = result.gunData!!.bullet.extraDamage
+        assertEquals(1.0f, extra.armorIgnore, 0.0001f)
+        assertEquals(0.0f, extra.headShotMultiplier, 0.0001f)
+    }
+
+    @Test
+    public fun `parser should warn on invalid distance in damage_adjust`() {
+        val json =
+            """
+            {
+              "ammo": "tacz:9mm",
+              "ammo_amount": 30,
+              "bullet": {
+                "damage": 10.0,
+                "speed": 5.0,
+                "extra_damage": {
+                  "damage_adjust": [
+                    { "distance": "bad", "damage": 5.0 },
+                    { "distance": 20, "damage": 8.0 }
+                  ]
+                }
+              }
+            }
+            """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:bad-distance")
+        val extra = result.gunData!!.bullet.extraDamage
+        assertEquals(1, extra.damageAdjust.size)
+        assertEquals(20.0f, extra.damageAdjust[0].distance, 0.0001f)
+        assertTrue(result.report.allIssues().any { it.field.contains("damage_adjust[0].distance") })
+    }
 }

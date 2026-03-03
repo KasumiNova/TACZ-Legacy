@@ -16,7 +16,8 @@ public data class GunData(
     val recoil: GunRecoilData = GunRecoilData(),
     val inaccuracy: GunInaccuracyData = GunInaccuracyData(),
     val bullet: GunBulletData,
-    val reload: GunReloadData
+    val reload: GunReloadData,
+    val scriptParams: Map<String, Float> = emptyMap()
 )
 
 public data class GunRecoilData(
@@ -45,7 +46,19 @@ public data class GunBulletData(
     val speed: Float,
     val gravity: Float,
     val pierce: Int,
-    val friction: Float = GunDefaults.BULLET_FRICTION
+    val friction: Float = GunDefaults.BULLET_FRICTION,
+    val extraDamage: GunExtraDamageData = GunExtraDamageData()
+)
+
+public data class GunExtraDamageData(
+    val armorIgnore: Float = 0f,
+    val headShotMultiplier: Float = 1f,
+    val damageAdjust: List<GunDistanceDamagePair> = emptyList()
+)
+
+public data class GunDistanceDamagePair(
+    val distance: Float,
+    val damage: Float
 )
 
 public data class GunReloadData(

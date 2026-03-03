@@ -35,6 +35,12 @@ public object FirstPersonMuzzleFlashRenderer {
 
         val offsets = LegacyGunItemStackRenderer.latestFirstPersonReferenceOffsets()
         val anchor = offsets.muzzleFlash ?: offsets.muzzlePos ?: return
+        val compensatedAnchor = FirstPersonFovCompensation.applyScale(
+            x = anchor.x,
+            y = anchor.y,
+            z = anchor.z,
+            scale = FirstPersonFovCompensation.currentScale()
+        )
 
         val minecraft = Minecraft.getMinecraft()
         val aimingProgress = LegacyGunItemStackRenderer.resolveFirstPersonAimingProgressForFov(
@@ -45,9 +51,9 @@ public object FirstPersonMuzzleFlashRenderer {
         val size = resolveFlashSize(aimingProgress)
 
         renderFlashAt(
-            x = anchor.x,
-            y = anchor.y,
-            z = anchor.z,
+            x = compensatedAnchor.x,
+            y = compensatedAnchor.y,
+            z = compensatedAnchor.z,
             size = size,
             alpha = alpha
         )

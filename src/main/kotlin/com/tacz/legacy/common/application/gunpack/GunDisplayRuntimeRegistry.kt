@@ -12,6 +12,7 @@ public data class GunDisplayDefinition(
     val animationPath: String?,
     val useDefaultAnimation: String? = null,
     val stateMachinePath: String?,
+    val stateMachineParams: Map<String, Float> = emptyMap(),
     val playerAnimator3rdPath: String?,
     val thirdPersonAnimation: String?,
     val modelParseSucceeded: Boolean,

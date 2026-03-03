@@ -8,6 +8,8 @@ import com.tacz.legacy.common.domain.gunpack.GunBulletData
 import com.tacz.legacy.common.domain.gunpack.GunPackCompatibilityReport
 import com.tacz.legacy.common.domain.gunpack.GunData
 import com.tacz.legacy.common.domain.gunpack.GunDefaults
+import com.tacz.legacy.common.domain.gunpack.GunDistanceDamagePair
+import com.tacz.legacy.common.domain.gunpack.GunExtraDamageData
 import com.tacz.legacy.common.domain.gunpack.GunFeedType
 import com.tacz.legacy.common.domain.gunpack.GunFireMode
 import com.tacz.legacy.common.domain.gunpack.GunInaccuracyData
@@ -130,6 +132,7 @@ public class GunPackCompatibilityParser {
         val recoil = readRecoil(root, report)
         val inaccuracy = readInaccuracy(root, report)
         val reload = readReload(root, report)
+        val scriptParams = readScriptParams(root, report)
         val bullet = readBullet(root, report)
 
         val normalized = normalize(
@@ -149,7 +152,8 @@ public class GunPackCompatibilityParser {
                 recoil = recoil,
                 inaccuracy = inaccuracy,
                 bullet = bullet,
-                reload = reload
+                reload = reload,
+                scriptParams = scriptParams
             ),
             report
         )
@@ -703,8 +707,136 @@ public class GunPackCompatibilityParser {
                 field = "bullet.pierce",
                 defaultValue = GunDefaults.BULLET_PIERCE,
                 report = report
-            )
+            ),
+            extraDamage = readExtraDamage(bulletObjRoot, report)
         )
+    }
+
+    private fun readExtraDamage(bulletRoot: JsonObject, report: GunPackCompatibilityReport): GunExtraDamageData {
+        val field = bulletRoot.findField("extra_damage", listOf("extraDamage"), "bullet.extra_damage", report)
+            ?: return GunExtraDamageData()
+
+        val obj = field.second
+        if (!obj.isJsonObject) {
+            report.addWarning(
+                code = IssueCode.INVALID_FIELD_TYPE,
+                field = "bullet.extra_damage",
+                message = "Field 'bullet.extra_damage' should be an object, ignored."
+            )
+            return GunExtraDamageData()
+        }
+
+        val extraRoot = obj.asJsonObject
+
+        val armorIgnore = readFloat(
+            root = extraRoot,
+            primary = "armor_ignore",
+            aliases = listOf("armorIgnore"),
+            field = "bullet.extra_damage.armor_ignore",
+            defaultValue = 0f,
+            report = report
+        ).coerceIn(0f, 1f)
+
+        val headShotMultiplier = readFloat(
+            root = extraRoot,
+            primary = "head_shot_multiplier",
+            aliases = listOf("headShotMultiplier", "headshot_multiplier"),
+            field = "bullet.extra_damage.head_shot_multiplier",
+            defaultValue = 1f,
+            report = report
+        ).coerceAtLeast(0f)
+
+        val damageAdjust = readDistanceDamageTable(extraRoot, report)
+
+        return GunExtraDamageData(
+            armorIgnore = armorIgnore,
+            headShotMultiplier = headShotMultiplier,
+            damageAdjust = damageAdjust
+        )
+    }
+
+    private fun readDistanceDamageTable(
+        extraRoot: JsonObject,
+        report: GunPackCompatibilityReport
+    ): List<GunDistanceDamagePair> {
+        val element = extraRoot.findField("damage_adjust", listOf("damageAdjust"), "bullet.extra_damage.damage_adjust", report)
+            ?: return emptyList()
+
+        val arr = element.second
+        if (!arr.isJsonArray) {
+            report.addWarning(
+                code = IssueCode.INVALID_FIELD_TYPE,
+                field = "bullet.extra_damage.damage_adjust",
+                message = "Field 'bullet.extra_damage.damage_adjust' should be an array, ignored."
+            )
+            return emptyList()
+        }
+
+        val out = mutableListOf<GunDistanceDamagePair>()
+        arr.asJsonArray.forEachIndexed { index, pairElement ->
+            if (!pairElement.isJsonObject) {
+                report.addWarning(
+                    code = IssueCode.INVALID_FIELD_TYPE,
+                    field = "bullet.extra_damage.damage_adjust[$index]",
+                    message = "Each damage_adjust entry should be an object, entry ignored."
+                )
+                return@forEachIndexed
+            }
+
+            val pairObj = pairElement.asJsonObject
+            val distanceElement = pairObj.get("distance")
+            val damageElement = pairObj.get("damage")
+
+            if (damageElement == null || !damageElement.isJsonPrimitive || !damageElement.asJsonPrimitive.isNumber) {
+                report.addWarning(
+                    code = IssueCode.INVALID_FIELD_TYPE,
+                    field = "bullet.extra_damage.damage_adjust[$index].damage",
+                    message = "Field 'damage' should be a number, entry ignored."
+                )
+                return@forEachIndexed
+            }
+
+            val distance: Float = when {
+                distanceElement == null -> {
+                    report.addWarning(
+                        code = IssueCode.MISSING_REQUIRED_FIELD,
+                        field = "bullet.extra_damage.damage_adjust[$index].distance",
+                        message = "Field 'distance' is missing, entry ignored."
+                    )
+                    return@forEachIndexed
+                }
+                distanceElement.isJsonPrimitive && distanceElement.asJsonPrimitive.isNumber -> {
+                    distanceElement.asFloat.coerceAtLeast(0f)
+                }
+                distanceElement.isJsonPrimitive && distanceElement.asJsonPrimitive.isString -> {
+                    if (distanceElement.asString.equals("infinite", ignoreCase = true)) {
+                        Float.MAX_VALUE
+                    } else {
+                        report.addWarning(
+                            code = IssueCode.INVALID_FIELD_VALUE,
+                            field = "bullet.extra_damage.damage_adjust[$index].distance",
+                            message = "Distance must be a number or 'infinite', entry ignored."
+                        )
+                        return@forEachIndexed
+                    }
+                }
+                else -> {
+                    report.addWarning(
+                        code = IssueCode.INVALID_FIELD_TYPE,
+                        field = "bullet.extra_damage.damage_adjust[$index].distance",
+                        message = "Field 'distance' should be a number or 'infinite', entry ignored."
+                    )
+                    return@forEachIndexed
+                }
+            }
+
+            out += GunDistanceDamagePair(
+                distance = distance,
+                damage = damageElement.asFloat.coerceAtLeast(0f)
+            )
+        }
+
+        return out.sortedBy { it.distance }
     }
 
     private fun readReload(root: JsonObject, report: GunPackCompatibilityReport): GunReloadData {
@@ -810,6 +942,52 @@ public class GunPackCompatibilityParser {
                 report = report
             )
         )
+    }
+    private fun readScriptParams(root: JsonObject, report: GunPackCompatibilityReport): Map<String, Float> {
+        val scriptParamField = root.findField(
+            primary = "script_param",
+            aliases = listOf("script_params"),
+            field = "script_param",
+            report = report
+        ) ?: return emptyMap()
+
+        val raw = scriptParamField.second
+        if (!raw.isJsonObject) {
+            report.addWarning(
+                code = IssueCode.INVALID_FIELD_TYPE,
+                field = "script_param",
+                message = "Field 'script_param' should be an object, ignored."
+            )
+            return emptyMap()
+        }
+
+        val out = linkedMapOf<String, Float>()
+        raw.asJsonObject.entrySet().forEach { entry ->
+            val key = entry.key.trim().lowercase()
+            if (key.isEmpty()) {
+                return@forEach
+            }
+            val value = entry.value
+            if (!value.isJsonPrimitive || !value.asJsonPrimitive.isNumber) {
+                report.addWarning(
+                    code = IssueCode.INVALID_FIELD_TYPE,
+                    field = "script_param.$key",
+                    message = "Field 'script_param.$key' should be number, entry ignored."
+                )
+                return@forEach
+            }
+            val numeric = value.asFloat
+            if (!numeric.isFinite()) {
+                report.addWarning(
+                    code = IssueCode.INVALID_FIELD_VALUE,
+                    field = "script_param.$key",
+                    message = "Field 'script_param.$key' should be finite, entry ignored."
+                )
+                return@forEach
+            }
+            out[key] = numeric
+        }
+        return out.toMap()
     }
 
     private fun readFireModes(root: JsonObject, report: GunPackCompatibilityReport): Set<GunFireMode> {

@@ -270,6 +270,7 @@ public class GunDisplayPreInitScanner {
             ?.lowercase()
             ?.ifBlank { null }
         val stateMachinePath = toScriptAssetPath(root.readString("state_machine"))
+        val stateMachineParams = parseStateMachineParams(root.readObject("state_machine_param"))
         val playerAnimator3rdPath = toPlayerAnimatorAssetPath(root.readString("player_animator_3rd"))
         val thirdPersonAnimation = root.readString("third_person_animation")?.trim()?.ifBlank { null }
         val sounds = root.readObject("sounds")
@@ -321,6 +322,7 @@ public class GunDisplayPreInitScanner {
             animationPath = animationPath,
             useDefaultAnimation = useDefaultAnimation,
             stateMachinePath = stateMachinePath,
+            stateMachineParams = stateMachineParams,
             playerAnimator3rdPath = playerAnimator3rdPath,
             thirdPersonAnimation = thirdPersonAnimation,
             modelParseSucceeded = modelParseSucceeded,
@@ -597,6 +599,33 @@ public class GunDisplayPreInitScanner {
             path = "$path.json"
         }
         return "assets/${resource.namespace}/display/guns/$path"
+    }
+
+    private fun parseStateMachineParams(raw: JsonObject?): Map<String, Float> {
+        if (raw == null || raw.entrySet().isEmpty()) {
+            return emptyMap()
+        }
+
+        val out = linkedMapOf<String, Float>()
+        raw.entrySet().forEach { entry ->
+            val key = entry.key.trim().lowercase()
+            if (key.isEmpty()) {
+                return@forEach
+            }
+
+            val value = entry.value
+            if (!value.isJsonPrimitive || !value.asJsonPrimitive.isNumber) {
+                return@forEach
+            }
+
+            val numeric = value.asFloat
+            if (!numeric.isFinite()) {
+                return@forEach
+            }
+            out[key] = numeric
+        }
+
+        return out.toMap()
     }
 
     private fun parseResourceId(raw: String?): ResourceId? {

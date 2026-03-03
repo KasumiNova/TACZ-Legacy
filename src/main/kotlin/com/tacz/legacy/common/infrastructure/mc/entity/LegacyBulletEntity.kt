@@ -4,7 +4,9 @@ import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.entity.projectile.EntityThrowable
 import net.minecraft.nbt.NBTTagCompound
+import net.minecraft.nbt.NBTTagList
 import net.minecraft.util.DamageSource
+import net.minecraft.util.EntityDamageSourceIndirect
 import net.minecraft.util.math.AxisAlignedBB
 import net.minecraft.util.math.RayTraceResult
 import net.minecraft.util.math.Vec3d
@@ -19,16 +21,24 @@ public class LegacyBulletEntity : EntityThrowable {
     private var maxLifetimeTicks: Int = DEFAULT_LIFETIME_TICKS
     private var ageTicks: Int = 0
 
+    private var armorIgnore: Float = 0f
+    private var headShotMultiplier: Float = 1f
+    private var damageAdjust: List<DamagePair> = emptyList()
+    private var startPos: Vec3d = Vec3d.ZERO
+
     public constructor(worldIn: World) : super(worldIn) {
         setSize(BULLET_SIZE, BULLET_SIZE)
+        startPos = Vec3d(posX, posY, posZ)
     }
 
     public constructor(worldIn: World, throwerIn: EntityLivingBase) : super(worldIn, throwerIn) {
         setSize(BULLET_SIZE, BULLET_SIZE)
+        startPos = Vec3d(posX, posY, posZ)
     }
 
     public constructor(worldIn: World, x: Double, y: Double, z: Double) : super(worldIn, x, y, z) {
         setSize(BULLET_SIZE, BULLET_SIZE)
+        startPos = Vec3d(x, y, z)
     }
 
     public fun configure(
@@ -36,13 +46,20 @@ public class LegacyBulletEntity : EntityThrowable {
         gravity: Float,
         friction: Float,
         pierce: Int,
-        lifetimeTicks: Int
+        lifetimeTicks: Int,
+        armorIgnore: Float = 0f,
+        headShotMultiplier: Float = 1f,
+        damageAdjust: List<DamagePair> = emptyList()
     ) {
         configuredDamage = damage.coerceAtLeast(0.0f)
         configuredGravity = gravity.coerceAtLeast(0.0f)
         configuredFriction = friction.coerceIn(0.0f, 1.0f)
         remainingPierce = pierce.coerceAtLeast(1)
         maxLifetimeTicks = lifetimeTicks.coerceAtLeast(1)
+        this.armorIgnore = armorIgnore.coerceIn(0f, 1f)
+        this.headShotMultiplier = headShotMultiplier.coerceAtLeast(0f)
+        this.damageAdjust = damageAdjust
+        this.startPos = Vec3d(posX, posY, posZ)
     }
 
     public override fun onUpdate() {
@@ -123,11 +140,15 @@ public class LegacyBulletEntity : EntityThrowable {
                     return
                 }
 
-                val damageSource = thrower?.let { owner ->
-                    DamageSource.causeThrownDamage(this, owner)
-                } ?: DamageSource.GENERIC
+                val hitVec = result.hitVec ?: Vec3d(target.posX, target.posY, target.posZ)
+                var damage = getDamageForDistance(hitVec)
 
-                val attacked = target.attackEntityFrom(damageSource, configuredDamage)
+                val headshot = isHeadshot(target, hitVec)
+                if (headshot) {
+                    damage *= headShotMultiplier
+                }
+
+                val attacked = applyDamageWithArmorIgnore(target, damage)
                 if (attacked) {
                     remainingPierce -= 1
                     if (remainingPierce <= 0) {
@@ -146,6 +167,73 @@ public class LegacyBulletEntity : EntityThrowable {
         }
     }
 
+    private fun getDamageForDistance(hitVec: Vec3d): Float {
+        if (damageAdjust.isEmpty()) {
+            return configuredDamage
+        }
+
+        val playerDistance = hitVec.distanceTo(startPos)
+        for (pair in damageAdjust) {
+            if (playerDistance < pair.distance) {
+                return pair.damage.coerceAtLeast(0f)
+            }
+        }
+
+        return 0f
+    }
+
+    private fun isHeadshot(target: Entity, hitVec: Vec3d): Boolean {
+        if (headShotMultiplier <= 1f) {
+            return false
+        }
+
+        val relativeY = hitVec.y - target.posY
+        val eyeHeight = target.eyeHeight.toDouble()
+        return relativeY > (eyeHeight - HEADSHOT_Y_TOLERANCE) && relativeY < (eyeHeight + HEADSHOT_Y_TOLERANCE)
+    }
+
+    private fun applyDamageWithArmorIgnore(target: Entity, totalDamage: Float): Boolean {
+        if (armorIgnore <= 0f || target !is EntityLivingBase) {
+            val damageSource = thrower?.let { owner ->
+                DamageSource.causeThrownDamage(this, owner)
+            } ?: DamageSource.GENERIC
+            return target.attackEntityFrom(damageSource, totalDamage)
+        }
+
+        val normalDamagePercent = 1f - armorIgnore
+        val armorPierceDamagePercent = armorIgnore
+
+        val normalSource = thrower?.let { owner ->
+            DamageSource.causeThrownDamage(this, owner)
+        } ?: DamageSource.GENERIC
+
+        val armorPierceSource = createArmorPierceSource()
+
+        var hit = false
+
+        if (normalDamagePercent > 0f) {
+            hit = target.attackEntityFrom(normalSource, totalDamage * normalDamagePercent)
+        }
+
+        target.hurtResistantTime = 0
+
+        if (armorPierceDamagePercent > 0f) {
+            hit = target.attackEntityFrom(armorPierceSource, totalDamage * armorPierceDamagePercent) || hit
+        }
+
+        return hit
+    }
+
+    private fun createArmorPierceSource(): DamageSource {
+        val source = if (thrower != null) {
+            EntityDamageSourceIndirect(ARMOR_PIERCE_DAMAGE_TYPE, this, thrower)
+        } else {
+            DamageSource(ARMOR_PIERCE_DAMAGE_TYPE)
+        }
+        source.setDamageBypassesArmor()
+        return source
+    }
+
     override fun writeEntityToNBT(compound: NBTTagCompound) {
         super.writeEntityToNBT(compound)
         compound.setFloat(TAG_DAMAGE, configuredDamage)
@@ -154,6 +242,22 @@ public class LegacyBulletEntity : EntityThrowable {
         compound.setInteger(TAG_REMAINING_PIERCE, remainingPierce)
         compound.setInteger(TAG_MAX_LIFETIME_TICKS, maxLifetimeTicks)
         compound.setInteger(TAG_AGE_TICKS, ageTicks)
+        compound.setFloat(TAG_ARMOR_IGNORE, armorIgnore)
+        compound.setFloat(TAG_HEADSHOT_MULTIPLIER, headShotMultiplier)
+        compound.setDouble(TAG_START_X, startPos.x)
+        compound.setDouble(TAG_START_Y, startPos.y)
+        compound.setDouble(TAG_START_Z, startPos.z)
+
+        if (damageAdjust.isNotEmpty()) {
+            val list = NBTTagList()
+            for (pair in damageAdjust) {
+                val entry = NBTTagCompound()
+                entry.setFloat(TAG_PAIR_DISTANCE, pair.distance)
+                entry.setFloat(TAG_PAIR_DAMAGE, pair.damage)
+                list.appendTag(entry)
+            }
+            compound.setTag(TAG_DAMAGE_ADJUST, list)
+        }
     }
 
     override fun readEntityFromNBT(compound: NBTTagCompound) {
@@ -168,6 +272,30 @@ public class LegacyBulletEntity : EntityThrowable {
         remainingPierce = compound.getInteger(TAG_REMAINING_PIERCE).coerceAtLeast(1)
         maxLifetimeTicks = compound.getInteger(TAG_MAX_LIFETIME_TICKS).coerceAtLeast(1)
         ageTicks = compound.getInteger(TAG_AGE_TICKS).coerceAtLeast(0)
+        armorIgnore = compound.getFloat(TAG_ARMOR_IGNORE).coerceIn(0f, 1f)
+        headShotMultiplier = if (compound.hasKey(TAG_HEADSHOT_MULTIPLIER)) {
+            compound.getFloat(TAG_HEADSHOT_MULTIPLIER).coerceAtLeast(0f)
+        } else {
+            1f
+        }
+        startPos = Vec3d(
+            compound.getDouble(TAG_START_X),
+            compound.getDouble(TAG_START_Y),
+            compound.getDouble(TAG_START_Z)
+        )
+
+        if (compound.hasKey(TAG_DAMAGE_ADJUST)) {
+            val list = compound.getTagList(TAG_DAMAGE_ADJUST, 10) // 10 = NBT.TAG_COMPOUND
+            val pairs = mutableListOf<DamagePair>()
+            for (i in 0 until list.tagCount()) {
+                val entry = list.getCompoundTagAt(i)
+                pairs += DamagePair(
+                    distance = entry.getFloat(TAG_PAIR_DISTANCE).coerceAtLeast(0f),
+                    damage = entry.getFloat(TAG_PAIR_DAMAGE).coerceAtLeast(0f)
+                )
+            }
+            damageAdjust = pairs
+        }
     }
 
     private fun applyFrictionCompensation() {
@@ -211,6 +339,11 @@ public class LegacyBulletEntity : EntityThrowable {
         return target.canBeCollidedWith()
     }
 
+    public data class DamagePair(
+        val distance: Float,
+        val damage: Float
+    )
+
     private companion object {
         private const val BULLET_SIZE: Float = 0.125f
         private const val DEFAULT_DAMAGE: Float = 5.0f
@@ -218,6 +351,8 @@ public class LegacyBulletEntity : EntityThrowable {
         private const val DEFAULT_FRICTION: Float = 0.01f
         private const val DEFAULT_PIERCE: Int = 1
         private const val DEFAULT_LIFETIME_TICKS: Int = 200
+        private const val HEADSHOT_Y_TOLERANCE: Double = 0.25
+        private const val ARMOR_PIERCE_DAMAGE_TYPE: String = "tacz.bullet_ignore_armor"
         private const val VANILLA_AIR_FRICTION: Float = 0.99f
         private const val VANILLA_WATER_FRICTION: Float = 0.8f
         private const val TACZ_WATER_FRICTION: Float = 0.4f
@@ -231,6 +366,14 @@ public class LegacyBulletEntity : EntityThrowable {
         private const val TAG_REMAINING_PIERCE: String = "RemainingPierce"
         private const val TAG_MAX_LIFETIME_TICKS: String = "MaxLifetimeTicks"
         private const val TAG_AGE_TICKS: String = "AgeTicks"
+        private const val TAG_ARMOR_IGNORE: String = "ArmorIgnore"
+        private const val TAG_HEADSHOT_MULTIPLIER: String = "HeadShotMultiplier"
+        private const val TAG_START_X: String = "StartX"
+        private const val TAG_START_Y: String = "StartY"
+        private const val TAG_START_Z: String = "StartZ"
+        private const val TAG_DAMAGE_ADJUST: String = "DamageAdjust"
+        private const val TAG_PAIR_DISTANCE: String = "Dist"
+        private const val TAG_PAIR_DAMAGE: String = "Dmg"
     }
 
 }

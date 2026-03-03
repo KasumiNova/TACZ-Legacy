@@ -56,6 +56,8 @@ public class GunDisplayPreInitScannerTest {
             assertEquals("assets/tacz/textures/gun/lod/ak47.png", definition?.lodTexturePath)
             assertEquals("assets/tacz/animations/ak47.animation.json", definition?.animationPath)
             assertEquals("assets/tacz/scripts/ak47_state_machine.lua", definition?.stateMachinePath)
+            assertEquals(0.4f, definition?.stateMachineParams?.get("intro_shell_ejecting_time"))
+            assertEquals(0.17f, definition?.stateMachineParams?.get("bolt_shell_ejecting_time"))
             assertEquals("assets/tacz/player_animator/rifle_default.player_animation.json", definition?.playerAnimator3rdPath)
             assertEquals("m16", definition?.thirdPersonAnimation)
             assertEquals(true, definition?.modelParseSucceeded)
@@ -140,6 +142,7 @@ public class GunDisplayPreInitScannerTest {
             assertEquals("animation.ak47.draw", definition?.animationDrawClipName)
             assertEquals("animation.ak47.run", definition?.animationRunClipName)
             assertEquals(true, definition?.stateMachineResolved)
+            assertEquals(0.4f, definition?.stateMachineParams?.get("intro_shell_ejecting_time"))
             assertEquals(true, definition?.playerAnimatorResolved)
             assertEquals("assets/tacz/textures/gun/hud/ak47.png", definition?.hudTexturePath)
             assertEquals("tacz:ak47/ak47_shoot", definition?.shootSoundId)
@@ -321,6 +324,10 @@ public class GunDisplayPreInitScannerTest {
                     "slot": "tacz:gun/slot/ak47",
                     "animation": "tacz:ak47",
                     "state_machine": "tacz:ak47_state_machine",
+                    "state_machine_param": {
+                        "intro_shell_ejecting_time": 0.4,
+                        "bolt_shell_ejecting_time": 0.17
+                    },
                     "player_animator_3rd": "tacz:rifle_default",
                     "third_person_animation": "m16",
           "hud": "tacz:gun/hud/ak47",

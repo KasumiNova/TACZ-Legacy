@@ -5,6 +5,7 @@ import com.tacz.legacy.common.application.weapon.WeaponBehaviorResult
 import com.tacz.legacy.common.domain.weapon.WeaponSnapshot
 import com.tacz.legacy.common.domain.weapon.WeaponState
 import com.tacz.legacy.common.domain.weapon.WeaponStepResult
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -170,6 +171,155 @@ public class WeaponAnimationRuntimeRegistryTest {
         val done = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 7_001L)
         assertNotNull(done)
         assertEquals(WeaponAnimationClipType.IDLE, done?.clip)
+    }
+
+    @Test
+    public fun `manual bolt preference should transition fire to bolt before settling idle`() {
+        WeaponAnimationRuntimeRegistry.clear()
+
+        WeaponAnimationRuntimeRegistry.observeBehavior(
+            sessionId = "player:test",
+            gunId = "m870",
+            result = behaviorResult(
+                snapshot = WeaponSnapshot(
+                    state = WeaponState.FIRING,
+                    ammoInMagazine = 7,
+                    ammoReserve = 24,
+                    cooldownTicksRemaining = 1,
+                    totalShotsFired = 1
+                ),
+                shotFired = true,
+                signals = setOf(WeaponAnimationSignal.FIRE)
+            ),
+            clipDurationOverridesMillis = mapOf(
+                WeaponAnimationClipType.FIRE to 100L,
+                WeaponAnimationClipType.BOLT to 250L
+            ),
+            preferBoltCycleAfterFire = true,
+            nowMillis = 10_000L
+        )
+
+        val fireClip = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 10_120L)
+        assertNotNull(fireClip)
+        assertEquals(WeaponAnimationClipType.BOLT, fireClip?.clip)
+
+        val boltMid = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 10_240L)
+        assertNotNull(boltMid)
+        assertEquals(WeaponAnimationClipType.BOLT, boltMid?.clip)
+        assertTrue((boltMid?.progress ?: 0f) > 0f)
+
+        val done = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 10_380L)
+        assertNotNull(done)
+        assertEquals(WeaponAnimationClipType.IDLE, done?.clip)
+    }
+
+    @Test
+    public fun `fire clip should emit shell eject transient event by default`() {
+        WeaponAnimationRuntimeRegistry.clear()
+
+        WeaponAnimationRuntimeRegistry.observeBehavior(
+            sessionId = "player:test",
+            gunId = "ak47",
+            result = behaviorResult(
+                snapshot = WeaponSnapshot(
+                    state = WeaponState.FIRING,
+                    ammoInMagazine = 29,
+                    ammoReserve = 60,
+                    cooldownTicksRemaining = 1,
+                    totalShotsFired = 1
+                ),
+                shotFired = true,
+                signals = setOf(WeaponAnimationSignal.FIRE)
+            ),
+            nowMillis = 11_000L
+        )
+
+        val started = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 11_000L)
+        val event = started?.transientEvents?.lastOrNull()
+        assertNotNull(event)
+        assertEquals(WeaponAnimationRuntimeEventType.SHELL_EJECT, event?.type)
+        assertEquals(WeaponAnimationClipType.FIRE, event?.clip)
+    }
+
+    @Test
+    public fun `reload shell event should fire after configured trigger millis`() {
+        WeaponAnimationRuntimeRegistry.clear()
+
+        WeaponAnimationRuntimeRegistry.observeBehavior(
+            sessionId = "player:test",
+            gunId = "ak47",
+            result = behaviorResult(
+                snapshot = WeaponSnapshot(
+                    state = WeaponState.RELOADING,
+                    ammoInMagazine = 0,
+                    ammoReserve = 90,
+                    reloadTicksRemaining = 30
+                ),
+                reloadStarted = true,
+                signals = setOf(WeaponAnimationSignal.RELOAD_START)
+            ),
+            shellEjectPlan = WeaponAnimationShellEjectPlan(
+                fireTriggerMillis = null,
+                reloadTriggerMillis = 400L,
+                boltTriggerMillis = null
+            ),
+            nowMillis = 12_000L
+        )
+
+        val beforeTrigger = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 12_350L)
+        assertTrue(beforeTrigger?.transientEvents.orEmpty().isEmpty())
+
+        val afterTrigger = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 12_410L)
+        val event = afterTrigger?.transientEvents?.lastOrNull()
+        assertNotNull(event)
+        assertEquals(WeaponAnimationRuntimeEventType.SHELL_EJECT, event?.type)
+        assertEquals(WeaponAnimationClipType.RELOAD, event?.clip)
+    }
+
+    @Test
+    public fun `manual bolt cycle should emit shell event on bolt trigger and suppress fire event when configured`() {
+        WeaponAnimationRuntimeRegistry.clear()
+
+        WeaponAnimationRuntimeRegistry.observeBehavior(
+            sessionId = "player:test",
+            gunId = "m870",
+            result = behaviorResult(
+                snapshot = WeaponSnapshot(
+                    state = WeaponState.FIRING,
+                    ammoInMagazine = 7,
+                    ammoReserve = 24,
+                    cooldownTicksRemaining = 1,
+                    totalShotsFired = 1
+                ),
+                shotFired = true,
+                signals = setOf(WeaponAnimationSignal.FIRE)
+            ),
+            clipDurationOverridesMillis = mapOf(
+                WeaponAnimationClipType.FIRE to 100L,
+                WeaponAnimationClipType.BOLT to 250L
+            ),
+            preferBoltCycleAfterFire = true,
+            shellEjectPlan = WeaponAnimationShellEjectPlan(
+                fireTriggerMillis = null,
+                reloadTriggerMillis = null,
+                boltTriggerMillis = 120L
+            ),
+            nowMillis = 13_000L
+        )
+
+        val afterFire = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 13_050L)
+        assertTrue(afterFire?.transientEvents.orEmpty().isEmpty())
+
+        val boltStarted = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 13_120L)
+        assertEquals(WeaponAnimationClipType.BOLT, boltStarted?.clip)
+        assertTrue(boltStarted?.transientEvents.orEmpty().isEmpty())
+
+        val boltTriggered = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 13_260L)
+        val event = boltTriggered?.transientEvents?.lastOrNull()
+        assertNotNull(event)
+        assertEquals(WeaponAnimationRuntimeEventType.SHELL_EJECT, event?.type)
+        assertEquals(WeaponAnimationClipType.BOLT, event?.clip)
+        assertFalse(event?.sequence == 0L)
     }
 
     private fun behaviorResult(

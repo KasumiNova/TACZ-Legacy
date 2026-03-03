@@ -1,5 +1,6 @@
 package com.tacz.legacy.common.infrastructure.mc.weapon
 
+import com.tacz.legacy.common.application.gunpack.GunDisplayDefinition
 import com.tacz.legacy.common.application.weapon.WeaponAutoSessionOrchestrator
 import com.tacz.legacy.common.application.weapon.WeaponSessionDebugSnapshot
 import com.tacz.legacy.common.application.weapon.WeaponSessionService
@@ -126,5 +127,95 @@ public class WeaponPlayerTickEventHandlerTest {
         assertEquals(baseSig, sameSig)
         assertNotEquals(baseSig, changedSig)
     }
+
+    @Test
+    public fun `manual action display with bolt clip should prefer fire to bolt transition`() {
+        val display = displayDefinition(
+            stateMachinePath = "assets/tacz/states/manual_action_state_machine.lua",
+            animationBoltClipName = "pull_bolt"
+        )
+
+        assertTrue(handler.shouldPreferBoltCycleAfterFire(display))
+    }
+
+    @Test
+    public fun `bolt shell timing param should enable fire to bolt transition when bolt clip can be inferred`() {
+        val display = displayDefinition(
+            stateMachinePath = "assets/tacz/states/default_state_machine.lua",
+            stateMachineParams = mapOf("bolt_shell_ejecting_time" to 0.12f),
+            animationClipNames = listOf("idle", "pull_bolt")
+        )
+
+        assertTrue(handler.shouldPreferBoltCycleAfterFire(display))
+    }
+
+    @Test
+    public fun `manual action display without bolt clip should not prefer fire to bolt transition`() {
+        val display = displayDefinition(
+            stateMachinePath = "assets/tacz/states/manual_action_state_machine.lua",
+            animationBoltClipName = null,
+            animationClipNames = listOf("idle", "shoot")
+        )
+
+        assertFalse(handler.shouldPreferBoltCycleAfterFire(display))
+    }
+
+    @Test
+    public fun `default state machine with bolt clip but no timing param should not force bolt transition`() {
+        val display = displayDefinition(
+            stateMachinePath = "assets/tacz/states/default_state_machine.lua",
+            animationBoltClipName = "pull_bolt"
+        )
+
+        assertFalse(handler.shouldPreferBoltCycleAfterFire(display))
+    }
+
+    @Test
+    public fun `gun script params should enable bolt transition when display has bolt clip`() {
+        val display = displayDefinition(
+            stateMachinePath = "assets/tacz/states/default_state_machine.lua",
+            animationBoltClipName = "pull_bolt"
+        )
+
+        assertTrue(
+            handler.shouldPreferBoltCycleAfterFire(
+                displayDefinition = display,
+                gunScriptParams = mapOf("bolt_feed_time" to 0.12f)
+            )
+        )
+    }
+
+    private fun displayDefinition(
+        stateMachinePath: String,
+        stateMachineParams: Map<String, Float> = emptyMap(),
+        animationBoltClipName: String? = null,
+        animationClipNames: List<String>? = null
+    ): GunDisplayDefinition = GunDisplayDefinition(
+        sourceId = "sample_pack/data/tacz/data/guns/shotgun/m870_display.json",
+        gunId = "m870",
+        displayResource = "tacz:gun/m870_display",
+        modelPath = null,
+        modelTexturePath = null,
+        lodModelPath = null,
+        lodTexturePath = null,
+        slotTexturePath = null,
+        animationPath = null,
+        stateMachinePath = stateMachinePath,
+        stateMachineParams = stateMachineParams,
+        playerAnimator3rdPath = null,
+        thirdPersonAnimation = null,
+        modelParseSucceeded = true,
+        modelBoneCount = null,
+        modelCubeCount = null,
+        animationParseSucceeded = true,
+        animationClipCount = animationClipNames?.size,
+        animationClipNames = animationClipNames,
+        animationBoltClipName = animationBoltClipName,
+        stateMachineResolved = true,
+        playerAnimatorResolved = true,
+        hudTexturePath = null,
+        hudEmptyTexturePath = null,
+        showCrosshair = true
+    )
 
 }
