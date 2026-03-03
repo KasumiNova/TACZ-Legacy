@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "normal": {
+      "model": "tacz:weapon_workbench"
+    }
+  }
+}

@@ -16,11 +16,12 @@ buildscript {
 plugins {
     id("java")
     id("java-library")
+    id("jacoco")
     kotlin("jvm") version libs.versions.kotlinVersion
     id("maven-publish")
     id("org.jetbrains.gradle.plugin.idea-ext") version "1.1.7"
     id("eclipse")
-    id("com.gtnewhorizons.retrofuturagradle") version "2.0.2"
+    id("com.gtnewhorizons.retrofuturagradle") version "1.3.34"
     id("com.matthewprenger.cursegradle") version "1.4.0"
 }
 
@@ -30,6 +31,8 @@ val mod_version: String by project
 val maven_group: String by project
 @Suppress("PropertyName")
 val mod_id: String by project
+@Suppress("PropertyName")
+val mod_name: String by project
 @Suppress("PropertyName")
 val archives_base_name: String by project
 
@@ -51,6 +54,8 @@ val include_mod: String by project
 @Suppress("PropertyName")
 val coremod_plugin_class_name: String by project
 
+version = mod_version
+
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(8))
@@ -60,6 +65,10 @@ java {
     // Generate sources and javadocs jars when building and publishing
     withSourcesJar()
     // withJavadocJar()
+}
+
+kotlin {
+    explicitApi()
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -106,13 +115,13 @@ minecraft {
     // Example:
     injectedTags.put("VERSION", project.version)
     injectedTags.put("MOD_ID", mod_id)
-    injectedTags.put("MOD_NAME", archives_base_name)
+    injectedTags.put("MOD_NAME", mod_name)
 }
 
 // Generate a group.archives_base_name.Tags class
 tasks.injectTags.configure {
     // Change Tags class' name here:
-    outputClassName.set("${maven_group}.${archives_base_name}.Tags")
+    outputClassName.set("${maven_group}.Tags")
 }
 
 repositories {
@@ -138,12 +147,10 @@ dependencies {
     implementation("io.github.chaosunity.forgelin:Forgelin-Continuous:${forgelin_continuous_version}") {
         exclude("net.minecraftforge")
     }
+    testImplementation("junit:junit:4.13.2")
     
     if (use_assetmover.toBoolean()) {
         implementation("com.cleanroommc:assetmover:2.5")
-    }
-    if (use_mixins.toBoolean()) {
-        implementation("zone.rong:mixinbooter:7.1")
     }
 
     // Example of deobfuscating a dependency
@@ -152,7 +159,7 @@ dependencies {
     if (use_mixins.toBoolean()) {
         // Change your mixin refmap name here:
         val mixin =
-            modUtils.enableMixins("org.spongepowered:mixin:0.8.3", "mixins.${archives_base_name}.refmap.json") as String
+            modUtils.enableMixins("zone.rong:mixinbooter:10.7", "mixins.${mod_id}.refmap.json") as String
         api(mixin) {
             isTransitive = true
         }
@@ -208,6 +215,9 @@ tasks.withType<Jar> {
         if (use_access_transformer.toBoolean()) {
             attributeMap["FMLAT"] = archives_base_name + "_at.cfg"
         }
+        if (use_mixins.toBoolean()) {
+            attributeMap["MixinConfigs"] = "mixins.${mod_id}.json"
+        }
         attributes(attributeMap)
     }
     // Add all embedded dependencies into the jar
@@ -252,4 +262,16 @@ idea {
 
 tasks.named("processIdeaSettings").configure {
     dependsOn("injectTags")
+}
+
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+tasks.named<JacocoReport>("jacocoTestReport") {
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        csv.required.set(false)
+    }
 }
