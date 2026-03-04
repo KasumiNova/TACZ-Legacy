@@ -3,7 +3,9 @@ package com.tacz.legacy.common.infrastructure.mc.network
 import com.tacz.legacy.TACZLegacy
 import com.tacz.legacy.common.application.weapon.WeaponSessionDebugSnapshot
 import com.tacz.legacy.common.domain.weapon.WeaponInput
+import com.tacz.legacy.common.infrastructure.mc.weapon.WeaponAttachmentSlot
 import net.minecraft.entity.player.EntityPlayerMP
+import net.minecraft.util.math.BlockPos
 import net.minecraftforge.fml.common.FMLCommonHandler
 import net.minecraftforge.fml.common.network.NetworkRegistry
 import net.minecraftforge.fml.common.network.simpleimpl.IMessage
@@ -43,6 +45,21 @@ public object LegacyNetworkHandler {
             side = Side.SERVER
         )
         registerPacket(
+            requestMessageType = PacketWeaponAttachmentAction::class.java,
+            messageHandler = PacketWeaponAttachmentAction.Handler::class.java,
+            side = Side.SERVER
+        )
+        registerPacket(
+            requestMessageType = PacketWeaponAmmoDebugState::class.java,
+            messageHandler = PacketWeaponAmmoDebugState.Handler::class.java,
+            side = Side.SERVER
+        )
+        registerPacket(
+            requestMessageType = PacketWeaponWorkbenchSessionControl::class.java,
+            messageHandler = PacketWeaponWorkbenchSessionControl.Handler::class.java,
+            side = Side.SERVER
+        )
+        registerPacket(
             requestMessageType = PacketWeaponSessionSync::class.java,
             messageHandler = PacketWeaponSessionSync.Handler::class.java,
             side = Side.CLIENT
@@ -55,6 +72,21 @@ public object LegacyNetworkHandler {
         registerPacket(
             requestMessageType = PacketWeaponBaseTimestampSync::class.java,
             messageHandler = PacketWeaponBaseTimestampSync.Handler::class.java,
+            side = Side.CLIENT
+        )
+        registerPacket(
+            requestMessageType = PacketWeaponWorkbenchOpenScreen::class.java,
+            messageHandler = PacketWeaponWorkbenchOpenScreen.Handler::class.java,
+            side = Side.CLIENT
+        )
+        registerPacket(
+            requestMessageType = PacketWeaponWorkbenchRefreshScreen::class.java,
+            messageHandler = PacketWeaponWorkbenchRefreshScreen.Handler::class.java,
+            side = Side.CLIENT
+        )
+        registerPacket(
+            requestMessageType = PacketWeaponWorkbenchCloseScreen::class.java,
+            messageHandler = PacketWeaponWorkbenchCloseScreen.Handler::class.java,
             side = Side.CLIENT
         )
         registerPacket(
@@ -101,6 +133,89 @@ public object LegacyNetworkHandler {
         }
 
         INSTANCE.sendToServer(PacketWeaponAimState(isAiming = isAiming))
+        return true
+    }
+
+    public fun sendWeaponAttachmentInstallToServer(slot: WeaponAttachmentSlot, attachmentId: String): Boolean {
+        if (!initialized) {
+            return false
+        }
+        if (!FMLCommonHandler.instance().side.isClient) {
+            return false
+        }
+
+        INSTANCE.sendToServer(PacketWeaponAttachmentAction.install(slot = slot, attachmentId = attachmentId))
+        return true
+    }
+
+    public fun sendWeaponAttachmentClearToServer(slot: WeaponAttachmentSlot): Boolean {
+        if (!initialized) {
+            return false
+        }
+        if (!FMLCommonHandler.instance().side.isClient) {
+            return false
+        }
+
+        INSTANCE.sendToServer(PacketWeaponAttachmentAction.clear(slot))
+        return true
+    }
+
+    public fun sendWeaponAmmoDebugStateToServer(ammoInMagazine: Int, ammoReserve: Int): Boolean {
+        if (!initialized) {
+            return false
+        }
+        if (!FMLCommonHandler.instance().side.isClient) {
+            return false
+        }
+
+        INSTANCE.sendToServer(PacketWeaponAmmoDebugState(ammoInMagazine = ammoInMagazine, ammoReserve = ammoReserve))
+        return true
+    }
+
+    public fun sendWeaponWorkbenchSessionCloseToServer(): Boolean {
+        if (!initialized) {
+            return false
+        }
+        if (!FMLCommonHandler.instance().side.isClient) {
+            return false
+        }
+
+        INSTANCE.sendToServer(PacketWeaponWorkbenchSessionControl.close())
+        return true
+    }
+
+    public fun sendWeaponWorkbenchOpenToClient(player: EntityPlayerMP, gunId: String, blockPos: BlockPos): Boolean {
+        if (!initialized) {
+            return false
+        }
+
+        INSTANCE.sendTo(
+            PacketWeaponWorkbenchOpenScreen(
+                gunId = gunId,
+                blockX = blockPos.x,
+                blockY = blockPos.y,
+                blockZ = blockPos.z
+            ),
+            player
+        )
+        return true
+    }
+
+    public fun sendWeaponWorkbenchRefreshToClient(player: EntityPlayerMP): Boolean {
+        if (!initialized) {
+            return false
+        }
+
+        INSTANCE.sendTo(PacketWeaponWorkbenchRefreshScreen(), player)
+        return true
+    }
+
+    public fun sendWeaponWorkbenchCloseToClient(player: EntityPlayerMP, reasonMessage: String = ""): Boolean {
+        if (!initialized) {
+            return false
+        }
+
+        INSTANCE.sendTo(PacketWeaponWorkbenchCloseScreen(reasonMessage), player)
         return true
     }
 

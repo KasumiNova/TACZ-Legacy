@@ -1,0 +1,19 @@
+{
+  "scenarioId": "fal_whitespace_script_trim_and_hook",
+  "gunId": "fal",
+  "scriptId": "assets/tacz/scripts/fal_state_machine.lua",
+  "script": "\n\n  function legacy_behavior_adjust(ctx)\n    return { speed_scale = 1.08 }\n  end\n\n  function legacy_hud_hint(ctx)\n    return '  READY  '\n  end\n",
+  "scriptParams": {
+    "lua_speed_scale": 0.95
+  },
+  "ammoInMagazine": 18,
+  "ammoReserve": 70,
+  "expected": {
+    "damageScale": 1.0,
+    "speedScale": 1.026,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 1.0,
+    "hudHint": "READY"
+  }
+}

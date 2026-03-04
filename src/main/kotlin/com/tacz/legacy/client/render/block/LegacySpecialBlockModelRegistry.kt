@@ -39,9 +39,39 @@ public object LegacySpecialBlockModelRegistry {
             debugTag = "builtin.weapon_workbench"
         ),
         LegacySpecialBlockModelDescriptor(
+            blockRegistryPath = LegacyContentIds.GUN_SMITH_TABLE,
+            modelResourcePath = "tacz:block/gun_smith_table",
+            debugTag = "builtin.gun_smith_table"
+        ),
+        LegacySpecialBlockModelDescriptor(
+            blockRegistryPath = LegacyContentIds.WORKBENCH_A,
+            modelResourcePath = "tacz:block/gun_smith_table",
+            debugTag = "builtin.workbench_a"
+        ),
+        LegacySpecialBlockModelDescriptor(
+            blockRegistryPath = LegacyContentIds.WORKBENCH_B,
+            modelResourcePath = "tacz:block/gun_smith_table",
+            debugTag = "builtin.workbench_b"
+        ),
+        LegacySpecialBlockModelDescriptor(
+            blockRegistryPath = LegacyContentIds.WORKBENCH_C,
+            modelResourcePath = "tacz:block/gun_smith_table",
+            debugTag = "builtin.workbench_c"
+        ),
+        LegacySpecialBlockModelDescriptor(
             blockRegistryPath = LegacyContentIds.STEEL_TARGET,
             modelResourcePath = "tacz:block/target",
             debugTag = "builtin.steel_target"
+        ),
+        LegacySpecialBlockModelDescriptor(
+            blockRegistryPath = LegacyContentIds.TARGET,
+            modelResourcePath = "tacz:block/target",
+            debugTag = "builtin.target"
+        ),
+        LegacySpecialBlockModelDescriptor(
+            blockRegistryPath = LegacyContentIds.STATUE,
+            modelResourcePath = "tacz:block/statue",
+            debugTag = "builtin.statue"
         )
     ).associateBy { normalizeRegistryPath(it.blockRegistryPath) }
 

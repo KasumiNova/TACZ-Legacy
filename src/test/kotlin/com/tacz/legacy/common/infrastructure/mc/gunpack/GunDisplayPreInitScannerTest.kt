@@ -55,7 +55,9 @@ public class GunDisplayPreInitScannerTest {
             assertEquals("assets/tacz/geo_models/gun/lod/ak47.json", definition?.lodModelPath)
             assertEquals("assets/tacz/textures/gun/lod/ak47.png", definition?.lodTexturePath)
             assertEquals("assets/tacz/animations/ak47.animation.json", definition?.animationPath)
+            assertNull(definition?.defaultAnimationPath)
             assertEquals("assets/tacz/scripts/ak47_state_machine.lua", definition?.stateMachinePath)
+            assertEquals("display", definition?.stateMachineSource)
             assertEquals(0.4f, definition?.stateMachineParams?.get("intro_shell_ejecting_time"))
             assertEquals(0.17f, definition?.stateMachineParams?.get("bolt_shell_ejecting_time"))
             assertEquals("assets/tacz/player_animator/rifle_default.player_animation.json", definition?.playerAnimator3rdPath)
@@ -213,6 +215,45 @@ public class GunDisplayPreInitScannerTest {
         }
     }
 
+    @Test
+    public fun `scan should fallback to default state machine when state_machine is missing`() {
+        val gameRoot = Files.createTempDirectory("tacz-legacy-display-default-sm-")
+        try {
+            val configRoot = gameRoot.resolve("config")
+            Files.createDirectories(configRoot)
+
+            val packRoot = gameRoot.resolve("tacz").resolve("sample_default_pack")
+            stageDirectoryPack(packRoot)
+
+            val displayFile = packRoot
+                .resolve("assets")
+                .resolve("tacz")
+                .resolve("display")
+                .resolve("guns")
+                .resolve("ak47_display.json")
+            Files.write(displayFile, sampleDisplayJsonWithoutStateMachine().toByteArray(StandardCharsets.UTF_8))
+
+            val defaultStateMachineFile = packRoot
+                .resolve("assets")
+                .resolve("tacz")
+                .resolve("scripts")
+                .resolve("default_state_machine.lua")
+            Files.write(defaultStateMachineFile, sampleStateMachineLua().toByteArray(StandardCharsets.UTF_8))
+
+            val report = scanner.scanAndLog(configRoot, LogManager.getLogger("GunDisplayScanDefaultStateMachineFallbackTest"))
+            val snapshot = GunDisplayRuntimeRegistry().replace(report)
+            val definition = snapshot.findDefinition("ak47")
+
+            assertNotNull(definition)
+            assertEquals("assets/tacz/animations/ak47_default.animation.json", definition?.defaultAnimationPath)
+            assertEquals("assets/tacz/scripts/default_state_machine.lua", definition?.stateMachinePath)
+            assertEquals("fallback_default", definition?.stateMachineSource)
+            assertEquals(true, definition?.stateMachineResolved)
+        } finally {
+            deleteRecursively(gameRoot)
+        }
+    }
+
     private fun stageDirectoryPack(packRoot: Path) {
         Files.createDirectories(packRoot)
         Files.write(
@@ -348,6 +389,18 @@ public class GunDisplayPreInitScannerTest {
           "show_crosshair": false
         }
         """.trimIndent()
+
+        private fun sampleDisplayJsonWithoutStateMachine(): String =
+                """
+                {
+                    "model": "tacz:gun/ak47_geo",
+                    "texture": "tacz:gun/uv/ak47",
+                    "animation": "tacz:ak47",
+                    "default_animation": "tacz:ak47_default",
+                    "player_animator_3rd": "tacz:rifle_default",
+                    "third_person_animation": "m16"
+                }
+                """.trimIndent()
 
         private fun sampleGeoModelJson(): String =
                 """

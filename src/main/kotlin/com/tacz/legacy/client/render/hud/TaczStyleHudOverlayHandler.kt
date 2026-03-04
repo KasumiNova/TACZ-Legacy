@@ -1,10 +1,14 @@
 package com.tacz.legacy.client.render.hud
 
 import com.tacz.legacy.client.render.RenderPipelineRuntime
+import com.tacz.legacy.client.gui.WeaponGunsmithImmersiveRuntime
 import com.tacz.legacy.client.render.weapon.WeaponVisualSampleRegistry
 import com.tacz.legacy.client.render.texture.TaczTextureResourceResolver
 import com.tacz.legacy.common.application.gunpack.GunDisplayRuntime
+import com.tacz.legacy.common.application.weapon.WeaponLuaScriptEngine
+import com.tacz.legacy.common.application.weapon.WeaponLuaScriptRuntime
 import com.tacz.legacy.common.application.weapon.WeaponRuntime
+import com.tacz.legacy.common.infrastructure.mc.weapon.WeaponItemStackRuntimeData
 import com.tacz.legacy.common.domain.weapon.WeaponFireMode
 import com.tacz.legacy.common.domain.weapon.WeaponState
 import com.tacz.legacy.common.infrastructure.mc.weapon.WeaponRuntimeMcBridge
@@ -73,6 +77,7 @@ public class TaczStyleHudOverlayHandler(
 
         val model = buildHudViewModel() ?: return
         renderAmmoHud(model, event.resolution.scaledWidth, event.resolution.scaledHeight)
+        renderAmmoMetadata(model, event.resolution.scaledWidth, event.resolution.scaledHeight)
 
         val width = event.resolution.scaledWidth
         val height = event.resolution.scaledHeight
@@ -81,7 +86,12 @@ public class TaczStyleHudOverlayHandler(
         renderShotMarker(width, height)
         renderAnimationDebug(model, width, height)
 
-        if (config.interactHintEnabled) {
+        val immersiveActive = WeaponGunsmithImmersiveRuntime.isActiveForGun(model.gunId)
+        if (immersiveActive) {
+            renderImmersiveWorkbenchHint(width, height)
+        }
+
+        if (config.interactHintEnabled && !immersiveActive) {
             renderInteractionHint(model, width, height)
         }
 
@@ -108,6 +118,12 @@ public class TaczStyleHudOverlayHandler(
             ?: return null
 
         val runtimeDefinition = WeaponRuntime.registry().snapshot().findDefinition(gunId) ?: return null
+        val heldStack = player.heldItemMainhand
+        val fallbackAmmoInMagazine = WeaponItemStackRuntimeData.readAmmoInMagazine(
+            stack = heldStack,
+            defaultValue = runtimeDefinition.spec.magazineSize
+        )
+        val fallbackAmmoReserve = WeaponItemStackRuntimeData.readAmmoReserve(heldStack, 0)
         val sessionId = WeaponRuntimeMcBridge.clientSessionIdForPlayer(player.uniqueID.toString())
         val sessionDebug = WeaponRuntimeMcBridge.sessionServiceOrNull()?.debugSnapshot(sessionId)
         val animationSnapshot = WeaponRuntimeMcBridge.animationSnapshotOrNull(sessionId)
@@ -120,7 +136,9 @@ public class TaczStyleHudOverlayHandler(
             sessionDebugSnapshot = sessionDebug,
             displayDefinition = displayDefinition,
             animationRuntimeSnapshot = animationSnapshot,
-            visualSample = visualSample
+            visualSample = visualSample,
+            fallbackAmmoInMagazine = fallbackAmmoInMagazine,
+            fallbackAmmoReserve = fallbackAmmoReserve
         )
     }
 
@@ -212,6 +230,58 @@ public class TaczStyleHudOverlayHandler(
         }
     }
 
+    private fun renderAmmoMetadata(model: WeaponHudViewModel, screenWidth: Int, screenHeight: Int) {
+        val minecraft = Minecraft.getMinecraft()
+        val player = minecraft.player ?: return
+        val held = player.heldItemMainhand
+        if (held.isEmpty) {
+            return
+        }
+
+        val definition = WeaponRuntime.registry().snapshot().findDefinition(model.gunId) ?: return
+        val displayDefinition = GunDisplayRuntime.registry().snapshot().findDefinition(model.gunId)
+        val ammoLine = "AMMO: ${definition.ammoId}"
+        minecraft.fontRenderer.drawStringWithShadow(
+            ammoLine,
+            (screenWidth - minecraft.fontRenderer.getStringWidth(ammoLine) - 8).toFloat(),
+            (screenHeight - 58).toFloat(),
+            0xAAAAAA
+        )
+
+        val attachmentSnapshot = WeaponItemStackRuntimeData.readAttachmentSnapshot(held)
+        val attachmentLine = buildAttachmentSummaryLine(attachmentSnapshot)
+        minecraft.fontRenderer.drawStringWithShadow(
+            attachmentLine,
+            (screenWidth - minecraft.fontRenderer.getStringWidth(attachmentLine) - 8).toFloat(),
+            (screenHeight - 68).toFloat(),
+            0x77D1FF
+        )
+
+        val luaHint = WeaponLuaScriptEngine.evaluate(
+            gunId = model.gunId,
+            displayDefinition = displayDefinition,
+            scriptParams = definition.scriptParams,
+            ammoInMagazine = model.ammoInMagazine,
+            ammoReserve = model.ammoReserve
+        )?.hudHint ?: WeaponLuaScriptRuntime.resolveHudHint(
+            scriptParams = definition.scriptParams,
+            ammoInMagazine = model.ammoInMagazine,
+            ammoReserve = model.ammoReserve
+        )
+        if (!luaHint.isNullOrBlank()) {
+            minecraft.fontRenderer.drawStringWithShadow(
+                luaHint,
+                (screenWidth - minecraft.fontRenderer.getStringWidth(luaHint) - 8).toFloat(),
+                (screenHeight - 78).toFloat(),
+                0xFFD93D
+            )
+        }
+    }
+
+    private fun buildAttachmentSummaryLine(snapshot: com.tacz.legacy.common.infrastructure.mc.weapon.WeaponAttachmentSnapshot): String {
+        return snapshot.hudSummaryText()
+    }
+
     private fun renderCenterProgress(model: WeaponHudViewModel, screenWidth: Int, screenHeight: Int) {
         val progress = max(model.reloadProgress, model.cooldownProgress)
         if (progress <= 0f) {
@@ -298,6 +368,28 @@ public class TaczStyleHudOverlayHandler(
             (screenWidth - textWidth).toFloat() / 2f,
             (screenHeight / 2f) + 50f,
             0xFFE9A93A.toInt()
+        )
+    }
+
+    private fun renderImmersiveWorkbenchHint(screenWidth: Int, screenHeight: Int) {
+        val minecraft = Minecraft.getMinecraft()
+        val title = "沉浸式改枪模式"
+        val subtitle = "按 G 退出 | 按 B 打开调试台"
+
+        val titleWidth = minecraft.fontRenderer.getStringWidth(title)
+        val subtitleWidth = minecraft.fontRenderer.getStringWidth(subtitle)
+
+        minecraft.fontRenderer.drawStringWithShadow(
+            title,
+            ((screenWidth - titleWidth) / 2f),
+            (screenHeight / 2f) - 58f,
+            0xFFE680
+        )
+        minecraft.fontRenderer.drawStringWithShadow(
+            subtitle,
+            ((screenWidth - subtitleWidth) / 2f),
+            (screenHeight / 2f) - 46f,
+            0xCFCFCF
         )
     }
 

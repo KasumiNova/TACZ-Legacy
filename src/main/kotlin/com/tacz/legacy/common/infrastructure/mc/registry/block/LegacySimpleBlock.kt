@@ -5,7 +5,7 @@ import net.minecraft.block.Block
 import net.minecraft.block.material.Material
 import net.minecraft.creativetab.CreativeTabs
 
-public class LegacySimpleBlock(
+public open class LegacySimpleBlock(
     private val registryPath: String,
     material: Material,
     creativeTab: CreativeTabs = CreativeTabs.BUILDING_BLOCKS,

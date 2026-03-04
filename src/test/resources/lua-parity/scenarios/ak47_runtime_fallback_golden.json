@@ -1,0 +1,20 @@
+{
+  "scenarioId": "ak47_runtime_fallback",
+  "gunId": "ak47",
+  "scriptId": "assets/tacz/scripts/ak47_state_machine.lua",
+  "script": "local x = 1 + 1",
+  "scriptParams": {
+    "script_speed_scale": 0.90,
+    "lua_hud_low_reserve_threshold": 10
+  },
+  "ammoInMagazine": 30,
+  "ammoReserve": 8,
+  "expected": {
+    "damageScale": 1.0,
+    "speedScale": 0.9,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 1.0,
+    "hudHint": "LUA: RES LOW"
+  }
+}

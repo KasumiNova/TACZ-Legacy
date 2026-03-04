@@ -185,6 +185,87 @@ public class LegacyGunItemStackRendererTest {
     }
 
     @Test
+    public fun `static base clip selection should prefer static idle variants`() {
+        val resolved = LegacyGunItemStackRenderer.resolveStaticBaseClipNameFromCandidates(
+            listOf(
+                "animations.ak47.idle",
+                "animations.ak47.static_idle",
+                "animations.ak47.fire"
+            )
+        )
+
+        assertEquals("animations.ak47.static_idle", resolved)
+    }
+
+    @Test
+    public fun `static base clip selection should support alias names`() {
+        val resolved = LegacyGunItemStackRenderer.resolveStaticBaseClipNameFromCandidates(
+            listOf(
+                "animations.ak47.idle_static",
+                "animations.ak47.base_idle"
+            )
+        )
+
+        assertEquals("animations.ak47.idle_static", resolved)
+    }
+
+    @Test
+    public fun `static base clip selection should return null when no candidate exists`() {
+        val resolved = LegacyGunItemStackRenderer.resolveStaticBaseClipNameFromCandidates(
+            listOf(
+                "animations.ak47.idle",
+                "animations.ak47.walk",
+                "animations.ak47.fire"
+            )
+        )
+
+        assertNull(resolved)
+    }
+
+    @Test
+    public fun `walk clip keywords should prefer aiming variant when ads is high`() {
+        val keywords = LegacyGunItemStackRenderer.resolveWalkClipKeywordsByContext(
+            aimingProgress = 0.75f,
+            moveForward = 1f,
+            moveStrafing = 0f
+        )
+
+        assertEquals("walk_aiming", keywords.first())
+    }
+
+    @Test
+    public fun `walk clip keywords should follow movement direction priority`() {
+        val forward = LegacyGunItemStackRenderer.resolveWalkClipKeywordsByContext(
+            aimingProgress = 0f,
+            moveForward = 1f,
+            moveStrafing = 0f
+        )
+        val backward = LegacyGunItemStackRenderer.resolveWalkClipKeywordsByContext(
+            aimingProgress = 0f,
+            moveForward = -1f,
+            moveStrafing = 0f
+        )
+        val side = LegacyGunItemStackRenderer.resolveWalkClipKeywordsByContext(
+            aimingProgress = 0f,
+            moveForward = 0f,
+            moveStrafing = 1f
+        )
+
+        assertEquals("walk_forward", forward.first())
+        assertEquals("walk_backward", backward.first())
+        assertEquals("walk_sideway", side.first())
+    }
+
+    @Test
+    public fun `run clip keywords should prefer hold animation while airborne`() {
+        val air = LegacyGunItemStackRenderer.resolveRunClipKeywordsByContext(onGround = false)
+        val ground = LegacyGunItemStackRenderer.resolveRunClipKeywordsByContext(onGround = true)
+
+        assertEquals("run_hold", air.first())
+        assertEquals("run", ground.first())
+    }
+
+    @Test
     public fun `resolve aim animation should avoid fire or reload variants`() {
         val display = sampleDisplay(
             slotTexturePath = null,
@@ -993,6 +1074,28 @@ public class LegacyGunItemStackRendererTest {
         assertEquals(
             "assets/tacz/animations/rifle_default.animation.json",
             LegacyGunItemStackRenderer.resolveDefaultAnimationAssetPath("shotgun")
+        )
+    }
+
+    @Test
+    public fun `default animation path should prefer explicit default_animation over profile`() {
+        assertEquals(
+            "assets/tacz/animations/ak47_default.animation.json",
+            LegacyGunItemStackRenderer.resolveDefaultAnimationAssetPath(
+                defaultAnimationPath = "assets/tacz/animations/ak47_default.animation.json",
+                useDefaultAnimation = "pistol"
+            )
+        )
+    }
+
+    @Test
+    public fun `default animation path should fallback to profile when explicit path missing`() {
+        assertEquals(
+            "assets/tacz/animations/pistol_default.animation.json",
+            LegacyGunItemStackRenderer.resolveDefaultAnimationAssetPath(
+                defaultAnimationPath = null,
+                useDefaultAnimation = "pistol"
+            )
         )
     }
 

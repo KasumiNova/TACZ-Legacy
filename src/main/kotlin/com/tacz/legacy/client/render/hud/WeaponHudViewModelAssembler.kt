@@ -40,6 +40,8 @@ public class WeaponHudViewModelAssembler {
         displayDefinition: GunDisplayDefinition? = null,
         animationRuntimeSnapshot: WeaponAnimationRuntimeSnapshot? = null,
         visualSample: WeaponVisualSampleDefinition?,
+        fallbackAmmoInMagazine: Int? = null,
+        fallbackAmmoReserve: Int? = null,
         uiConfig: WeaponHudUiConfig = WeaponHudUiRuntime.currentConfig()
     ): WeaponHudViewModel? {
         val gunId = sessionDebugSnapshot?.gunId
@@ -52,9 +54,9 @@ public class WeaponHudViewModelAssembler {
         val fireMode = definition?.spec?.fireMode
         val snapshot = sessionDebugSnapshot?.snapshot
 
-        val ammoInMagazine = (snapshot?.ammoInMagazine ?: maxMagazine)
+        val ammoInMagazine = (snapshot?.ammoInMagazine ?: fallbackAmmoInMagazine ?: maxMagazine)
             .coerceIn(0, MAX_AMMO_DISPLAY)
-        val ammoReserve = (snapshot?.ammoReserve ?: 0)
+        val ammoReserve = (snapshot?.ammoReserve ?: fallbackAmmoReserve ?: 0)
             .coerceIn(0, MAX_AMMO_DISPLAY)
 
         val reloadProgress = if (snapshot != null && state == WeaponState.RELOADING && definition != null) {

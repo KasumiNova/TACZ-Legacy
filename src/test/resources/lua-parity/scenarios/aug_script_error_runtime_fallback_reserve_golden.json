@@ -1,0 +1,20 @@
+{
+  "scenarioId": "aug_script_error_runtime_fallback_reserve",
+  "gunId": "aug",
+  "scriptId": "assets/tacz/scripts/aug_state_machine.lua",
+  "script": "function legacy_behavior_adjust(ctx)\n  error('boom')\nend",
+  "scriptParams": {
+    "lua_speed_scale": 0.85,
+    "lua_hud_low_reserve_threshold": 12
+  },
+  "ammoInMagazine": 30,
+  "ammoReserve": 10,
+  "expected": {
+    "damageScale": 1.0,
+    "speedScale": 0.85,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 1.0,
+    "hudHint": "LUA: RES LOW"
+  }
+}

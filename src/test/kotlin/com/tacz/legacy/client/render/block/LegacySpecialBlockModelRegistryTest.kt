@@ -13,11 +13,14 @@ public class LegacySpecialBlockModelRegistryTest {
     public fun `find should return builtin descriptor for registered block ids`() {
         val workbench = LegacySpecialBlockModelRegistry.find(LegacyContentIds.WEAPON_WORKBENCH)
         val target = LegacySpecialBlockModelRegistry.find(LegacyContentIds.STEEL_TARGET)
+        val statue = LegacySpecialBlockModelRegistry.find(LegacyContentIds.STATUE)
 
         assertNotNull(workbench)
         assertNotNull(target)
+        assertNotNull(statue)
         assertEquals("tacz:block/gun_smith_table", workbench?.modelResourcePath)
         assertEquals("tacz:block/target", target?.modelResourcePath)
+        assertEquals("tacz:block/statue", statue?.modelResourcePath)
     }
 
     @Test
@@ -33,31 +36,39 @@ public class LegacySpecialBlockModelRegistryTest {
         val all = LegacySpecialBlockModelRegistry.allBuiltin()
         val stats = LegacySpecialBlockModelRegistry.adaptationStats()
 
-        assertEquals(2, all.size)
-        assertEquals(LegacyContentIds.STEEL_TARGET, all[0].blockRegistryPath)
-        assertEquals(LegacyContentIds.WEAPON_WORKBENCH, all[1].blockRegistryPath)
+        assertEquals(8, all.size)
+        assertEquals(all.map { it.blockRegistryPath }.sorted(), all.map { it.blockRegistryPath })
+        assertTrue(all.any { it.blockRegistryPath == LegacyContentIds.WORKBENCH_A })
+        assertTrue(all.any { it.blockRegistryPath == LegacyContentIds.WORKBENCH_B })
+        assertTrue(all.any { it.blockRegistryPath == LegacyContentIds.WORKBENCH_C })
+        assertTrue(all.any { it.blockRegistryPath == LegacyContentIds.TARGET })
+        assertTrue(all.any { it.blockRegistryPath == LegacyContentIds.STATUE })
         assertTrue(all.all { it.modelResourcePath.startsWith("tacz:block/") })
-        assertEquals(2, stats.adapterCount)
+        assertEquals(8, stats.adapterCount)
         assertEquals(0, stats.translucentAdapterCount)
-        assertEquals(listOf(LegacyContentIds.STEEL_TARGET, LegacyContentIds.WEAPON_WORKBENCH), stats.blockRegistryPaths)
+        assertEquals(all.map { it.blockRegistryPath }, stats.blockRegistryPaths)
         assertNull(LegacySpecialBlockModelRegistry.find("minecraft:stone"))
     }
 
     @Test
     public fun `validateModelResources should report missing and valid classpath models`() {
         val report = LegacySpecialBlockModelRegistry.validateModelResources { classpathPath ->
-            classpathPath.contains("gun_smith_table")
+            classpathPath.contains("gun_smith_table") || classpathPath.contains("target")
         }
 
-        assertEquals(2, report.total)
-        assertEquals(1, report.valid)
+        assertEquals(8, report.total)
+        assertEquals(7, report.valid)
         assertEquals(1, report.missing)
-        assertEquals(listOf("assets/tacz/models/block/target.json"), report.missingModelJsonClasspathPaths)
-        assertEquals(LegacyContentIds.STEEL_TARGET, report.entries[0].blockRegistryPath)
-        assertEquals("assets/tacz/models/block/target.json", report.entries[0].modelJsonClasspathPath)
-        assertEquals(false, report.entries[0].exists)
-        assertEquals(LegacyContentIds.WEAPON_WORKBENCH, report.entries[1].blockRegistryPath)
-        assertEquals("assets/tacz/models/block/gun_smith_table.json", report.entries[1].modelJsonClasspathPath)
-        assertEquals(true, report.entries[1].exists)
+        assertEquals(listOf("assets/tacz/models/block/statue.json"), report.missingModelJsonClasspathPaths)
+        assertTrue(report.entries.any {
+            it.blockRegistryPath == LegacyContentIds.STATUE &&
+                it.modelJsonClasspathPath == "assets/tacz/models/block/statue.json" &&
+                !it.exists
+        })
+        assertTrue(report.entries.any {
+            it.blockRegistryPath == LegacyContentIds.WORKBENCH_A &&
+                it.modelJsonClasspathPath == "assets/tacz/models/block/gun_smith_table.json" &&
+                it.exists
+        })
     }
 }

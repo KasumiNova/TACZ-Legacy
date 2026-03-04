@@ -10,9 +10,12 @@ import com.tacz.legacy.common.domain.weapon.WeaponStateMachine
 public data class WeaponDefinition(
     val sourceId: String,
     val gunId: String,
+    val ammoId: String,
     val spec: com.tacz.legacy.common.domain.weapon.WeaponSpec,
     val ballistics: WeaponBallistics,
-    val scriptParams: Map<String, Float> = emptyMap()
+    val scriptParams: Map<String, Float> = emptyMap(),
+    val allowAttachmentTypes: Set<String> = emptySet(),
+    val allowAttachments: Set<String> = emptySet()
 )
 
 public data class WeaponBallistics(
@@ -146,8 +149,9 @@ public class WeaponRuntimeRegistry(
 
                     val adjustKey = spec.fireMode.name
                     val adjust = data.fireModeAdjust[adjustKey]
+                    val luaAdjustments = WeaponLuaScriptRuntime.resolveBallisticAdjustments(data.scriptParams)
 
-                    val adjustedBallistics = if (adjust != null) {
+                    val fireModeAdjustedBallistics = if (adjust != null) {
                         ballistics.copy(
                             damage = (ballistics.damage + adjust.damageAmount).coerceAtLeast(0f),
                             speed = (ballistics.speed + adjust.speed / TICKS_PER_SECOND).coerceAtLeast(MIN_PROJECTILE_SPEED_PER_TICK),
@@ -166,18 +170,46 @@ public class WeaponRuntimeRegistry(
                         ballistics
                     }
 
-                    val adjustedSpec = if (adjust != null && adjust.roundsPerMinute != 0) {
+                    val adjustedBallistics = fireModeAdjustedBallistics.copy(
+                        damage = (fireModeAdjustedBallistics.damage * luaAdjustments.damageScale).coerceAtLeast(0f),
+                        speed = (fireModeAdjustedBallistics.speed * luaAdjustments.speedScale)
+                            .coerceAtLeast(MIN_PROJECTILE_SPEED_PER_TICK),
+                        knockback = (fireModeAdjustedBallistics.knockback * luaAdjustments.knockbackScale).coerceAtLeast(0f),
+                        inaccuracy = fireModeAdjustedBallistics.inaccuracy.copy(
+                            stand = (fireModeAdjustedBallistics.inaccuracy.stand * luaAdjustments.inaccuracyScale)
+                                .coerceAtLeast(0f),
+                            move = (fireModeAdjustedBallistics.inaccuracy.move * luaAdjustments.inaccuracyScale)
+                                .coerceAtLeast(0f),
+                            sneak = (fireModeAdjustedBallistics.inaccuracy.sneak * luaAdjustments.inaccuracyScale)
+                                .coerceAtLeast(0f),
+                            lie = (fireModeAdjustedBallistics.inaccuracy.lie * luaAdjustments.inaccuracyScale)
+                                .coerceAtLeast(0f),
+                            aim = (fireModeAdjustedBallistics.inaccuracy.aim * luaAdjustments.inaccuracyScale)
+                                .coerceAtLeast(0f)
+                        )
+                    )
+
+                    val fireModeAdjustedSpec = if (adjust != null && adjust.roundsPerMinute != 0) {
                         spec.copy(roundsPerMinute = (spec.roundsPerMinute + adjust.roundsPerMinute).coerceAtLeast(1))
                     } else {
                         spec
                     }
 
+                    val adjustedSpec = fireModeAdjustedSpec.copy(
+                        roundsPerMinute = (fireModeAdjustedSpec.roundsPerMinute.toFloat() * luaAdjustments.rpmScale)
+                            .toInt()
+                            .coerceAtLeast(1)
+                    )
+
                     definitionsByGunId[gunId] = WeaponDefinition(
                         sourceId = sourceId,
                         gunId = gunId,
+                        ammoId = data.ammoId,
                         spec = adjustedSpec,
-                            ballistics = adjustedBallistics,
-                            scriptParams = data.scriptParams
+                        ballistics = adjustedBallistics,
+                        scriptParams = data.scriptParams,
+                        allowAttachmentTypes = data.allowAttachmentTypes,
+                        allowAttachments = data.allowAttachments
                     )
                 }.onFailure {
                     failedGunIds += gunId
@@ -306,6 +338,7 @@ public class WeaponRuntimeRegistry(
         return WeaponDefinition(
             sourceId = "$FALLBACK_SOURCE_ID_PREFIX$gunId",
             gunId = gunId,
+            ammoId = FALLBACK_AMMO_ID,
             spec = WeaponSpec(
                 magazineSize = FALLBACK_MAGAZINE_SIZE,
                 roundsPerMinute = FALLBACK_RPM,
@@ -356,3 +389,4 @@ private const val FALLBACK_BULLET_DAMAGE: Float = 5.0f
 private const val FALLBACK_BULLET_LIFETIME_TICKS: Int = 200
 private const val FALLBACK_BULLET_PIERCE: Int = 1
 private const val FALLBACK_BULLET_INACCURACY: Float = 0.0f
+private const val FALLBACK_AMMO_ID: String = "tacz:generic"

@@ -18,9 +18,23 @@ public object WeaponKeyBindings {
         "key.category.tacz"
     )
 
+    public val attachmentWorkbenchKey: KeyBinding = KeyBinding(
+        "key.tacz.attachment_workbench.desc",
+        Keyboard.KEY_B,
+        "key.category.tacz"
+    )
+
+    public val immersiveWorkbenchKey: KeyBinding = KeyBinding(
+        "key.tacz.immersive_workbench.desc",
+        Keyboard.KEY_G,
+        "key.category.tacz"
+    )
+
     public fun registerAll() {
         ClientRegistry.registerKeyBinding(reloadKey)
         ClientRegistry.registerKeyBinding(inspectKey)
+        ClientRegistry.registerKeyBinding(attachmentWorkbenchKey)
+        ClientRegistry.registerKeyBinding(immersiveWorkbenchKey)
     }
 
 }

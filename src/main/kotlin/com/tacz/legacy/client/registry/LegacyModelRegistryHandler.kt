@@ -1,9 +1,12 @@
 package com.tacz.legacy.client.registry
 
 import com.tacz.legacy.TACZLegacy
-import com.tacz.legacy.client.render.item.LegacyGunItemStackRenderer
+import com.tacz.legacy.client.render.item.LegacyNonGunItemStackRenderer
 import com.tacz.legacy.common.infrastructure.mc.registry.LegacyBlocks
 import com.tacz.legacy.common.infrastructure.mc.registry.LegacyItems
+import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyAmmoBoxItem
+import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyAmmoItem
+import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyAttachmentItem
 import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyGunItem
 import net.minecraft.init.Items
 import net.minecraft.item.Item
@@ -22,9 +25,9 @@ public object LegacyModelRegistryHandler {
     @SubscribeEvent
     public fun onModelRegistry(event: ModelRegistryEvent) {
         LegacyItems.registeredStandalone()
-            .filterIsInstance<LegacyGunItem>()
-            .forEach { gunItem ->
-                gunItem.setTileEntityItemStackRenderer(LegacyGunItemStackRenderer)
+            .filter { it is LegacyGunItem || it is LegacyAmmoItem || it is LegacyAmmoBoxItem || it is LegacyAttachmentItem }
+            .forEach { item ->
+                item.setTileEntityItemStackRenderer(LegacyNonGunItemStackRenderer)
             }
 
         LegacyItems.registeredStandalone().forEach { item ->
@@ -44,13 +47,24 @@ public object LegacyModelRegistryHandler {
             "Item registryName is null for ${item.javaClass.simpleName}."
         }
 
-        val modelResource = if (item is LegacyGunItem) {
-            ModelResourceLocation(
-                ResourceLocation(TACZLegacy.MOD_ID, MODERN_GUN_ITEM_MODEL_PATH),
+        val modelResource = when (item) {
+            is LegacyGunItem -> ModelResourceLocation(
+                ResourceLocation(TACZLegacy.MOD_ID, FLAT_ICON_ITEM_MODEL_PATH),
                 "inventory"
             )
-        } else {
-            ModelResourceLocation(registryName, "inventory")
+            is LegacyAmmoItem -> ModelResourceLocation(
+                ResourceLocation(TACZLegacy.MOD_ID, FLAT_ICON_ITEM_MODEL_PATH),
+                "inventory"
+            )
+            is LegacyAmmoBoxItem -> ModelResourceLocation(
+                ResourceLocation(TACZLegacy.MOD_ID, FLAT_ICON_ITEM_MODEL_PATH),
+                "inventory"
+            )
+            is LegacyAttachmentItem -> ModelResourceLocation(
+                ResourceLocation(TACZLegacy.MOD_ID, FLAT_ICON_ITEM_MODEL_PATH),
+                "inventory"
+            )
+            else -> ModelResourceLocation(registryName, "inventory")
         }
 
         ModelLoader.setCustomModelResourceLocation(
@@ -60,6 +74,6 @@ public object LegacyModelRegistryHandler {
         )
     }
 
-    private const val MODERN_GUN_ITEM_MODEL_PATH: String = "modern_kinetic_gun"
+    private const val FLAT_ICON_ITEM_MODEL_PATH: String = "flat_icon"
 
 }

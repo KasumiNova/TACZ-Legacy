@@ -844,4 +844,61 @@ public class GunPackCompatibilityParserTest {
         assertNull(g.melee.defaultMelee)
         assertTrue(g.fireModeAdjust.isEmpty())
     }
+
+    @Test
+    public fun `parser should normalize allow attachment types and ignore unsupported values`() {
+        val json = """
+          {
+            "ammo": "tacz:9mm",
+            "fire_mode": ["semi"],
+            "allow_attachment_types": [
+              "scope",
+              "extended_magazine",
+              "tacz:laser",
+              "under_barrel",
+              true
+            ]
+          }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:allow-types")
+        val gunData = result.gunData
+
+        assertNotNull(gunData)
+        assertEquals(setOf("SCOPE", "EXTENDED_MAG", "LASER"), gunData?.allowAttachmentTypes)
+        assertTrue(result.report.allIssues().any {
+            it.code == "UNSUPPORTED_ENUM_VALUE" && it.field == "allow_attachment_types[3]"
+        })
+        assertTrue(result.report.allIssues().any {
+            it.code == "INVALID_FIELD_TYPE" && it.field == "allow_attachment_types[4]"
+        })
+    }
+
+    @Test
+    public fun `parser should normalize allow attachments and ignore malformed entries`() {
+        val json = """
+          {
+            "ammo": "tacz:9mm",
+            "fire_mode": ["semi"],
+            "allow_attachments": [
+              "TACZ:Scope_A",
+              "#TACZ:Scopes",
+              ":",
+              3
+            ]
+          }
+        """.trimIndent()
+
+        val result = parser.parseGunDataJson(json, "test:allow-attachments")
+        val gunData = result.gunData
+
+        assertNotNull(gunData)
+        assertEquals(setOf("tacz:scope_a", "#tacz:scopes"), gunData?.allowAttachments)
+        assertTrue(result.report.allIssues().any {
+            it.code == "INVALID_FIELD_VALUE" && it.field == "allow_attachments[2]"
+        })
+        assertTrue(result.report.allIssues().any {
+            it.code == "INVALID_FIELD_TYPE" && it.field == "allow_attachments[3]"
+        })
+    }
 }

@@ -1,0 +1,20 @@
+{
+  "scenarioId": "fal_hud_number_fallback_reserve",
+  "gunId": "fal",
+  "scriptId": "assets/tacz/scripts/fal_state_machine.lua",
+  "script": "function legacy_hud_hint(ctx)\n  return 123\nend",
+  "scriptParams": {
+    "lua_rpm_scale": 1.10,
+    "lua_hud_low_reserve_threshold": 5
+  },
+  "ammoInMagazine": 20,
+  "ammoReserve": 4,
+  "expected": {
+    "damageScale": 1.0,
+    "speedScale": 1.0,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 1.10,
+    "hudHint": "123"
+  }
+}

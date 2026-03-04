@@ -38,6 +38,7 @@ public class WeaponAnimationRuntimeRegistryTest {
         val started = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 1_000L)
         assertNotNull(started)
         assertEquals(WeaponAnimationClipType.FIRE, started?.clip)
+        assertEquals(WeaponAnimationClipSource.SIGNAL, started?.clipSource)
         assertEquals(0f, started?.progress ?: -1f, 0.0001f)
 
         val mid = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 1_060L)
@@ -51,7 +52,7 @@ public class WeaponAnimationRuntimeRegistryTest {
     }
 
     @Test
-    public fun `observe reload should track progress by reload ticks and settle idle on complete`() {
+    public fun `observe reload should track progress by reload ticks and settle idle after clip ends`() {
         WeaponAnimationRuntimeRegistry.clear()
 
         WeaponAnimationRuntimeRegistry.observeBehavior(
@@ -71,10 +72,11 @@ public class WeaponAnimationRuntimeRegistryTest {
             nowMillis = 2_000L
         )
 
+        // clipDurationMillis = reloadTicks * 50 = 2000ms; elapsed-based progress = elapsed / 2000.
         val start = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 2_000L)
         assertNotNull(start)
         assertEquals(WeaponAnimationClipType.RELOAD, start?.clip)
-        assertEquals(0.25f, start?.progress ?: -1f, 0.0001f)
+        assertEquals(0.0f, start?.progress ?: -1f, 0.0001f)
 
         WeaponAnimationRuntimeRegistry.observeBehavior(
             sessionId = "player:test",
@@ -94,7 +96,7 @@ public class WeaponAnimationRuntimeRegistryTest {
         val mid = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 2_500L)
         assertNotNull(mid)
         assertEquals(WeaponAnimationClipType.RELOAD, mid?.clip)
-        assertEquals(0.75f, mid?.progress ?: -1f, 0.0001f)
+        assertEquals(0.25f, mid?.progress ?: -1f, 0.0001f)
 
         WeaponAnimationRuntimeRegistry.observeBehavior(
             sessionId = "player:test",
@@ -115,8 +117,29 @@ public class WeaponAnimationRuntimeRegistryTest {
 
         val completed = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 3_000L)
         assertNotNull(completed)
-        assertEquals(WeaponAnimationClipType.IDLE, completed?.clip)
-        assertEquals(0f, completed?.progress ?: -1f, 0.0001f)
+        assertEquals(WeaponAnimationClipType.RELOAD, completed?.clip)
+        assertEquals(0.5f, completed?.progress ?: -1f, 0.0001f)
+
+        // 模拟后续 tick：即使逻辑已回到 IDLE，也要等 RELOAD clip 播放到其时长结束后再切回 idle。
+        WeaponAnimationRuntimeRegistry.observeBehavior(
+            sessionId = "player:test",
+            gunId = "ak47",
+            result = behaviorResult(
+                snapshot = WeaponSnapshot(
+                    state = WeaponState.IDLE,
+                    ammoInMagazine = 30,
+                    ammoReserve = 60,
+                    reloadTicksRemaining = 0
+                )
+            ),
+            reloadTicks = 40,
+            nowMillis = 4_001L
+        )
+
+        val settled = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 4_001L)
+        assertNotNull(settled)
+        assertEquals(WeaponAnimationClipType.IDLE, settled?.clip)
+        assertEquals(0f, settled?.progress ?: -1f, 0.0001f)
     }
 
     @Test
@@ -320,6 +343,92 @@ public class WeaponAnimationRuntimeRegistryTest {
         assertEquals(WeaponAnimationRuntimeEventType.SHELL_EJECT, event?.type)
         assertEquals(WeaponAnimationClipType.BOLT, event?.clip)
         assertFalse(event?.sequence == 0L)
+    }
+
+    @Test
+    public fun `snapshot should expose explicit clip source override`() {
+        WeaponAnimationRuntimeRegistry.clear()
+
+        WeaponAnimationRuntimeRegistry.observeBehavior(
+            sessionId = "player:test",
+            gunId = "ak47",
+            result = behaviorResult(
+                snapshot = WeaponSnapshot(
+                    state = WeaponState.FIRING,
+                    ammoInMagazine = 29,
+                    ammoReserve = 90,
+                    cooldownTicksRemaining = 1,
+                    totalShotsFired = 1
+                ),
+                shotFired = true,
+                signals = setOf(WeaponAnimationSignal.FIRE)
+            ),
+            clipSource = WeaponAnimationClipSource.SIGNAL_FALLBACK,
+            nowMillis = 14_000L
+        )
+
+        val snapshot = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 14_010L)
+        assertNotNull(snapshot)
+        assertEquals(WeaponAnimationClipType.FIRE, snapshot?.clip)
+        assertEquals(WeaponAnimationClipSource.SIGNAL_FALLBACK, snapshot?.clipSource)
+    }
+
+    @Test
+    public fun `lua source preferred clip should override signal selection`() {
+        WeaponAnimationRuntimeRegistry.clear()
+
+        WeaponAnimationRuntimeRegistry.observeBehavior(
+            sessionId = "player:test",
+            gunId = "ak47",
+            result = behaviorResult(
+                snapshot = WeaponSnapshot(
+                    state = WeaponState.FIRING,
+                    ammoInMagazine = 29,
+                    ammoReserve = 90,
+                    cooldownTicksRemaining = 1,
+                    totalShotsFired = 1
+                ),
+                shotFired = true,
+                signals = setOf(WeaponAnimationSignal.FIRE)
+            ),
+            preferredClip = WeaponAnimationClipType.AIM,
+            clipSource = WeaponAnimationClipSource.LUA_STATE_MACHINE,
+            nowMillis = 15_000L
+        )
+
+        val snapshot = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 15_010L)
+        assertNotNull(snapshot)
+        assertEquals(WeaponAnimationClipType.AIM, snapshot?.clip)
+        assertEquals(WeaponAnimationClipSource.LUA_STATE_MACHINE, snapshot?.clipSource)
+    }
+
+    @Test
+    public fun `fallback source should ignore preferred clip and keep signal behavior`() {
+        WeaponAnimationRuntimeRegistry.clear()
+
+        WeaponAnimationRuntimeRegistry.observeBehavior(
+            sessionId = "player:test",
+            gunId = "ak47",
+            result = behaviorResult(
+                snapshot = WeaponSnapshot(
+                    state = WeaponState.FIRING,
+                    ammoInMagazine = 29,
+                    ammoReserve = 90,
+                    cooldownTicksRemaining = 1,
+                    totalShotsFired = 1
+                ),
+                shotFired = true,
+                signals = setOf(WeaponAnimationSignal.FIRE)
+            ),
+            preferredClip = WeaponAnimationClipType.AIM,
+            clipSource = WeaponAnimationClipSource.SIGNAL_FALLBACK,
+            nowMillis = 16_000L
+        )
+
+        val snapshot = WeaponAnimationRuntimeRegistry.snapshot("player:test", nowMillis = 16_010L)
+        assertNotNull(snapshot)
+        assertEquals(WeaponAnimationClipType.FIRE, snapshot?.clip)
+        assertEquals(WeaponAnimationClipSource.SIGNAL_FALLBACK, snapshot?.clipSource)
     }
 
     private fun behaviorResult(

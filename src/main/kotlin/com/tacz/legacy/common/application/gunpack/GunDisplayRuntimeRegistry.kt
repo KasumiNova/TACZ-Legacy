@@ -10,8 +10,11 @@ public data class GunDisplayDefinition(
     val lodTexturePath: String?,
     val slotTexturePath: String?,
     val animationPath: String?,
+    val defaultAnimationPath: String? = null,
     val useDefaultAnimation: String? = null,
     val stateMachinePath: String?,
+    val stateMachineSource: String = "display",
+    val stateMachineScriptContent: String? = null,
     val stateMachineParams: Map<String, Float> = emptyMap(),
     val playerAnimator3rdPath: String?,
     val thirdPersonAnimation: String?,
@@ -51,7 +54,26 @@ public data class GunDisplayDefinition(
     val reloadTacticalSoundId: String? = null,
     val modelGeometryCount: Int? = null,
     val modelRootBoneCount: Int? = null,
-    val modelRootBoneNames: List<String>? = null
+    val modelRootBoneNames: List<String>? = null,
+
+    // --- Display JSON 扩展字段（逐步对齐 TACZ display schema） ---
+    val ammoCountStyle: String? = null,
+    val damageStyle: String? = null,
+    val transformScaleThirdPerson: DisplayVec3? = null,
+    val transformScaleGround: DisplayVec3? = null,
+    val transformScaleFixed: DisplayVec3? = null,
+    val muzzleFlashTexturePath: String? = null,
+    val muzzleFlashScale: Float? = null
+)
+
+/**
+ * display json 里常见的三元向量：例如 transform.scale 或各类 pos/rotate/scale。
+ * 注意：这里是纯数据承载，坐标系解释由渲染/消费侧决定。
+ */
+public data class DisplayVec3(
+    val x: Float,
+    val y: Float,
+    val z: Float
 )
 
 public data class GunDisplayScanEntry(

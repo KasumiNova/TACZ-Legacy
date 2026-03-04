@@ -1,5 +1,7 @@
 package com.tacz.legacy.common.application.weapon
 
+import com.tacz.legacy.common.application.port.DistanceDamagePairDto
+import com.tacz.legacy.common.application.port.ExplosionDto
 import com.tacz.legacy.common.application.port.HitKind
 import com.tacz.legacy.common.application.port.RaycastHit
 import com.tacz.legacy.common.application.port.Vec3d
@@ -276,6 +278,82 @@ public class WeaponPortBehaviorEngineTest {
         assertEquals(1, fixture.audio.recorded().size)
         assertEquals(1, fixture.particles.recorded().size)
         assertNotNull(result.bulletEntityId)
+    }
+
+    @Test
+    public fun `dispatch should forward ballistic config fields into bullet request`() {
+        val fixture = RuntimePortsFixtures.create(seed = 19L)
+        val machine = WeaponStateMachine(
+            spec = WeaponSpec(magazineSize = 3, roundsPerMinute = 600, reloadTicks = 2),
+            initialSnapshot = WeaponSnapshot(ammoInMagazine = 3, ammoReserve = 0)
+        )
+        val engine = WeaponPortBehaviorEngine(
+            world = fixture.world,
+            audio = fixture.audio,
+            particles = fixture.particles
+        )
+
+        val config = WeaponBehaviorConfig(
+            bulletSpeed = 9.5f,
+            bulletGravity = 0.03f,
+            bulletFriction = 0.2f,
+            bulletDamage = 12.4f,
+            bulletLifeTicks = 88,
+            bulletPierce = 4,
+            bulletInaccuracyDegrees = 0f,
+            bulletArmorIgnore = 0.35f,
+            bulletHeadShotMultiplier = 1.8f,
+            bulletDamageAdjust = listOf(
+                DistanceDamagePairDto(distance = 16f, damage = 9.6f)
+            ),
+            bulletKnockback = 2.2f,
+            bulletIgniteEntity = true,
+            bulletIgniteEntityTime = 5,
+            bulletIgniteBlock = true,
+            bulletExplosion = ExplosionDto(
+                radius = 2.5f,
+                damage = 7.0f,
+                knockback = true,
+                destroyBlock = false,
+                delaySeconds = 0.2f
+            ),
+            bulletGunId = "tacz:ak47"
+        )
+
+        engine.dispatch(
+            machine = machine,
+            input = WeaponInput.TriggerPressed,
+            muzzlePosition = Vec3d(1.0, 2.0, 3.0),
+            shotDirection = Vec3d(0.0, 0.0, 10.0),
+            config = config
+        )
+
+        val request = fixture.world.recordedBullets().single()
+        assertEquals(9.5f, request.speed, 0.0001f)
+        assertEquals(0.03f, request.gravity, 0.0001f)
+        assertEquals(0.2f, request.friction, 0.0001f)
+        assertEquals(12.4f, request.damage, 0.0001f)
+        assertEquals(88, request.maxLifetimeTicks)
+        assertEquals(4, request.pierce)
+        assertEquals(0.35f, request.armorIgnore, 0.0001f)
+        assertEquals(1.8f, request.headShotMultiplier, 0.0001f)
+        assertEquals(1, request.damageAdjust.size)
+        assertEquals(16f, request.damageAdjust.first().distance, 0.0001f)
+        assertEquals(9.6f, request.damageAdjust.first().damage, 0.0001f)
+        assertEquals(2.2f, request.knockback, 0.0001f)
+        assertTrue(request.igniteEntity)
+        assertEquals(5, request.igniteEntityTime)
+        assertTrue(request.igniteBlock)
+        assertEquals(2.5f, request.explosion?.radius ?: 0f, 0.0001f)
+        assertEquals(7.0f, request.explosion?.damage ?: 0f, 0.0001f)
+        assertEquals(true, request.explosion?.knockback)
+        assertEquals(false, request.explosion?.destroyBlock)
+        assertEquals(0.2f, request.explosion?.delaySeconds ?: 0f, 0.0001f)
+        assertEquals("tacz:ak47", request.gunId)
+
+        assertEquals(0.0, request.direction.x, 1.0e-6)
+        assertEquals(0.0, request.direction.y, 1.0e-6)
+        assertEquals(1.0, request.direction.z, 1.0e-6)
     }
 
 }

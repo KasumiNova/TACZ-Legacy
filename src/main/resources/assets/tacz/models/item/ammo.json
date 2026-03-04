@@ -1,17 +1,6 @@
 {
-	"credit": "Made with Blockbench",
-	"parent": "builtin/entity",
-	"gui_light": "front",
-	"display": {
-		"firstperson_righthand": {
-			"scale": [0.5, 0.5, 0.5]
-		},
-		"firstperson_lefthand": {
-			"scale": [
-				0.5,
-				0.5,
-				0.5
-			]
-		}
+	"parent": "item/generated",
+	"textures": {
+		"layer0": "tacz:item/ammo_box"
 	}
 }

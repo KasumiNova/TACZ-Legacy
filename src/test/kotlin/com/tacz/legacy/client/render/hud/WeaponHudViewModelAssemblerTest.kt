@@ -172,6 +172,7 @@ public class WeaponHudViewModelAssemblerTest {
         WeaponDefinition(
             sourceId = "ak47.json",
             gunId = "ak47",
+            ammoId = "tacz:7_62x39",
             spec = WeaponSpec(
                 magazineSize = 30,
                 roundsPerMinute = 700,

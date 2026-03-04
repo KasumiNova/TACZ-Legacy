@@ -22,6 +22,12 @@ public enum class WeaponAnimationRuntimeEventType {
     SHELL_EJECT
 }
 
+public enum class WeaponAnimationClipSource {
+    SIGNAL,
+    LUA_STATE_MACHINE,
+    SIGNAL_FALLBACK
+}
+
 public data class WeaponAnimationRuntimeEvent(
     val sequence: Long,
     val type: WeaponAnimationRuntimeEventType,
@@ -52,6 +58,7 @@ public data class WeaponAnimationRuntimeSnapshot(
     val sessionId: String,
     val gunId: String,
     val clip: WeaponAnimationClipType,
+    val clipSource: WeaponAnimationClipSource = WeaponAnimationClipSource.SIGNAL,
     val progress: Float,
     val elapsedMillis: Long,
     val durationMillis: Long,
@@ -72,6 +79,8 @@ public object WeaponAnimationRuntimeRegistry {
         reloadTicks: Int? = null,
         preferBoltCycleAfterFire: Boolean = false,
         shellEjectPlan: WeaponAnimationShellEjectPlan = WeaponAnimationShellEjectPlan(),
+        preferredClip: WeaponAnimationClipType? = null,
+        clipSource: WeaponAnimationClipSource = WeaponAnimationClipSource.SIGNAL,
         nowMillis: Long = System.currentTimeMillis()
     ) {
         val normalizedGunId = gunId.trim().lowercase()
@@ -86,10 +95,13 @@ public object WeaponAnimationRuntimeRegistry {
             SessionTrack(
                 gunId = normalizedGunId,
                 clip = WeaponAnimationClipType.IDLE,
+                clipSource = clipSource,
                 clipStartedAtMillis = nowMillis,
                 clipDurationMillis = 0L,
                 lastUpdatedAtMillis = nowMillis,
-                reloadProgressHint = null,
+                reloadTicksTotalHint = null,
+                reloadTicksRemainingHint = null,
+                reloadCompletedAtMillis = null,
                 preferBoltCycleAfterFire = preferBoltCycleAfterFire,
                 boltClipDurationMillisHint = resolveBoltClipDurationHint(clipDurationOverridesMillis),
                 shellEjectPlan = normalizedPlan,
@@ -101,6 +113,7 @@ public object WeaponAnimationRuntimeRegistry {
         } else {
             track
         }
+        current.clipSource = clipSource
         current.preferBoltCycleAfterFire = preferBoltCycleAfterFire
         current.boltClipDurationMillisHint = resolveBoltClipDurationHint(clipDurationOverridesMillis)
         current.shellEjectPlan = shellEjectPlan.normalized()
@@ -110,7 +123,12 @@ public object WeaponAnimationRuntimeRegistry {
 
         val step = result.step
         val signals = result.animationSignals
-        val selectedClip = selectClip(signals, step.snapshot.state)
+        val selectedClip = selectClip(
+            signals = signals,
+            state = step.snapshot.state,
+            clipSource = clipSource,
+            preferredClip = preferredClip
+        )
 
         if (selectedClip != null) {
             val shouldRestart = selectedClip != current.clip || shouldRestartClip(selectedClip, signals)
@@ -135,12 +153,40 @@ public object WeaponAnimationRuntimeRegistry {
                 )
             }
         } else if (signals.contains(WeaponAnimationSignal.RELOAD_COMPLETE)) {
-            switchClip(
-                track = current,
-                clip = WeaponAnimationClipType.IDLE,
-                nowMillis = nowMillis,
-                durationMillis = 0L
-            )
+            // 对齐 TACZ：逻辑换弹完成≠立刻把动画硬切回 idle。
+            // 允许 RELOAD clip 播完其 clip 长度（通常来自 animation_length），避免结尾瞬移/过渡突兀。
+            if (current.clip == WeaponAnimationClipType.RELOAD) {
+                if (current.reloadCompletedAtMillis == null) {
+                    current.reloadCompletedAtMillis = nowMillis
+                }
+                val elapsed = (nowMillis - current.clipStartedAtMillis).coerceAtLeast(0L)
+                if (current.clipDurationMillis <= 0L || elapsed >= current.clipDurationMillis) {
+                    switchClip(
+                        track = current,
+                        clip = WeaponAnimationClipType.IDLE,
+                        nowMillis = nowMillis,
+                        durationMillis = 0L
+                    )
+                }
+            } else {
+                switchClip(
+                    track = current,
+                    clip = WeaponAnimationClipType.IDLE,
+                    nowMillis = nowMillis,
+                    durationMillis = 0L
+                )
+            }
+        } else if (current.clip == WeaponAnimationClipType.RELOAD && current.reloadCompletedAtMillis != null) {
+            // RELOAD_COMPLETE 信号一般只在完成那一 tick 发一次；后续 tick 仍需要推进到动画结束再回 idle。
+            val elapsed = (nowMillis - current.clipStartedAtMillis).coerceAtLeast(0L)
+            if (current.clipDurationMillis <= 0L || elapsed >= current.clipDurationMillis) {
+                switchClip(
+                    track = current,
+                    clip = WeaponAnimationClipType.IDLE,
+                    nowMillis = nowMillis,
+                    durationMillis = 0L
+                )
+            }
         } else if (shouldExpireTransientClip(current, nowMillis)) {
             val nextClip = resolveClipOnTransientExpire(current)
             switchClip(
@@ -157,13 +203,14 @@ public object WeaponAnimationRuntimeRegistry {
         }
 
         current.lastUpdatedAtMillis = nowMillis
-        current.reloadProgressHint = if (current.clip == WeaponAnimationClipType.RELOAD) {
+        if (current.clip == WeaponAnimationClipType.RELOAD) {
             val totalReloadTicks = reloadTicks?.coerceAtLeast(1)
                 ?: (current.clipDurationMillis / MILLIS_PER_TICK).toInt().coerceAtLeast(1)
-            val remaining = step.snapshot.reloadTicksRemaining.coerceAtLeast(0)
-            (1f - (remaining.toFloat() / totalReloadTicks.toFloat())).coerceIn(0f, 1f)
+            current.reloadTicksTotalHint = totalReloadTicks
+            current.reloadTicksRemainingHint = step.snapshot.reloadTicksRemaining.coerceAtLeast(0)
         } else {
-            null
+            current.reloadTicksTotalHint = null
+            current.reloadTicksRemainingHint = null
         }
 
         maybeEmitShellEjectEvent(current, nowMillis)
@@ -195,8 +242,23 @@ public object WeaponAnimationRuntimeRegistry {
         val elapsed = (nowMillis - track.clipStartedAtMillis).coerceAtLeast(0L)
         val progress = when {
             track.clip == WeaponAnimationClipType.IDLE -> 0f
-            track.clip == WeaponAnimationClipType.RELOAD && track.reloadProgressHint != null ->
-                track.reloadProgressHint!!.coerceIn(0f, 1f)
+            track.clip == WeaponAnimationClipType.RELOAD &&
+                track.clipDurationMillis > 0L -> {
+                // 优先使用动画文件真实时长（来自 clipDurationOverrides / animation_length）
+                // 作为 progress 基准，避免 reloadTicks（round(seconds*20)）与动画文件时长不同源。
+                (elapsed.toFloat() / track.clipDurationMillis.toFloat()).coerceIn(0f, 1f)
+            }
+            track.clip == WeaponAnimationClipType.RELOAD &&
+                track.reloadTicksTotalHint != null &&
+                track.reloadTicksRemainingHint != null -> {
+                // Fallback：无动画文件时长覆盖时仍走 tick-counting + 子 tick 插值。
+                val total = track.reloadTicksTotalHint!!.coerceAtLeast(1)
+                val remaining = track.reloadTicksRemainingHint!!.coerceAtLeast(0)
+                val subTick = ((nowMillis - track.lastUpdatedAtMillis).toFloat() / MILLIS_PER_TICK.toFloat())
+                    .coerceIn(0f, 1f)
+                val remainingInterpolated = (remaining.toFloat() - subTick).coerceAtLeast(0f)
+                (1f - (remainingInterpolated / total.toFloat())).coerceIn(0f, 1f)
+            }
             track.clipDurationMillis <= 0L -> 1f
             else -> (elapsed.toFloat() / track.clipDurationMillis.toFloat()).coerceIn(0f, 1f)
         }
@@ -205,6 +267,7 @@ public object WeaponAnimationRuntimeRegistry {
             sessionId = sessionId,
             gunId = track.gunId,
             clip = track.clip,
+            clipSource = track.clipSource,
             progress = progress,
             elapsedMillis = elapsed,
             durationMillis = track.clipDurationMillis,
@@ -225,8 +288,14 @@ public object WeaponAnimationRuntimeRegistry {
 
     private fun selectClip(
         signals: Set<WeaponAnimationSignal>,
-        state: WeaponState
+        state: WeaponState,
+        clipSource: WeaponAnimationClipSource,
+        preferredClip: WeaponAnimationClipType?
     ): WeaponAnimationClipType? {
+        if (clipSource == WeaponAnimationClipSource.LUA_STATE_MACHINE && preferredClip != null) {
+            return preferredClip
+        }
+
         if (signals.contains(WeaponAnimationSignal.RELOAD_START) || state == WeaponState.RELOADING) {
             return WeaponAnimationClipType.RELOAD
         }
@@ -269,8 +338,10 @@ public object WeaponAnimationRuntimeRegistry {
         track.clipStartedAtMillis = nowMillis
         track.clipDurationMillis = durationMillis.coerceAtLeast(0L)
         track.lastUpdatedAtMillis = nowMillis
+        track.reloadCompletedAtMillis = null
         if (clip != WeaponAnimationClipType.RELOAD) {
-            track.reloadProgressHint = null
+            track.reloadTicksTotalHint = null
+            track.reloadTicksRemainingHint = null
         }
         track.shellEjectTriggerMillisForCurrentClip = track.shellEjectPlan.triggerForClip(clip)
         track.shellEjectEmittedForCurrentClip = false
@@ -387,10 +458,13 @@ public object WeaponAnimationRuntimeRegistry {
     private data class SessionTrack(
         val gunId: String,
         var clip: WeaponAnimationClipType,
+        var clipSource: WeaponAnimationClipSource,
         var clipStartedAtMillis: Long,
         var clipDurationMillis: Long,
         var lastUpdatedAtMillis: Long,
-        var reloadProgressHint: Float?,
+        var reloadTicksTotalHint: Int?,
+        var reloadTicksRemainingHint: Int?,
+        var reloadCompletedAtMillis: Long?,
         var preferBoltCycleAfterFire: Boolean,
         var boltClipDurationMillisHint: Long,
         var shellEjectPlan: WeaponAnimationShellEjectPlan,

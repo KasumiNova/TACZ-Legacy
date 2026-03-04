@@ -1,0 +1,23 @@
+{
+  "scenarioId": "m4_alias_base_only",
+  "gunId": "m4a1",
+  "scriptId": "assets/tacz/scripts/m4_state_machine.lua",
+  "script": "local noop = true",
+  "scriptParams": {
+    "script_damage_scale": 1.15,
+    "lua_speed_scale": 0.95,
+    "knockback_scale": 1.10,
+    "script_inaccuracy_scale": 0.80,
+    "lua_rpm_scale": 1.05
+  },
+  "ammoInMagazine": 30,
+  "ammoReserve": 120,
+  "expected": {
+    "damageScale": 1.15,
+    "speedScale": 0.95,
+    "knockbackScale": 1.10,
+    "inaccuracyScale": 0.80,
+    "rpmScale": 1.05,
+    "hudHint": null
+  }
+}

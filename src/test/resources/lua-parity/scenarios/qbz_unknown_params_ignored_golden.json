@@ -1,0 +1,20 @@
+{
+  "scenarioId": "qbz_unknown_params_ignored",
+  "gunId": "qbz95",
+  "scriptId": "assets/tacz/scripts/qbz_state_machine.lua",
+  "script": "local noop = true",
+  "scriptParams": {
+    "foo": 2.0,
+    "bar_speed": 0.5
+  },
+  "ammoInMagazine": 30,
+  "ammoReserve": 90,
+  "expected": {
+    "damageScale": 1.0,
+    "speedScale": 1.0,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 1.0,
+    "hudHint": null
+  }
+}

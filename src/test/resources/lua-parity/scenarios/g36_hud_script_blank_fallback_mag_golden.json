@@ -1,0 +1,19 @@
+{
+  "scenarioId": "g36_hud_script_blank_fallback_mag",
+  "gunId": "g36",
+  "scriptId": "assets/tacz/scripts/g36_state_machine.lua",
+  "script": "function legacy_hud_hint(ctx)\n  return '   '\nend",
+  "scriptParams": {
+    "lua_hud_low_mag_threshold": 5
+  },
+  "ammoInMagazine": 4,
+  "ammoReserve": 90,
+  "expected": {
+    "damageScale": 1.0,
+    "speedScale": 1.0,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 1.0,
+    "hudHint": "LUA: MAG LOW"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "scenarioId": "scar_overlay_negative_and_nan",
+  "gunId": "scar_h",
+  "scriptId": "assets/tacz/scripts/scar_state_machine.lua",
+  "script": "function legacy_behavior_adjust(ctx)\n  return {\n    damage_scale = -2.0,\n    speed_scale = 0/0,\n    knockback_scale = 1.5\n  }\nend",
+  "scriptParams": {
+    "lua_damage_scale": 1.20,
+    "lua_speed_scale": 1.10,
+    "lua_knockback_scale": 0.80,
+    "lua_inaccuracy_scale": 1.30,
+    "lua_rpm_scale": 1.40
+  },
+  "ammoInMagazine": 18,
+  "ammoReserve": 40,
+  "expected": {
+    "damageScale": 0.0,
+    "speedScale": 1.10,
+    "knockbackScale": 1.20,
+    "inaccuracyScale": 1.30,
+    "rpmScale": 1.40,
+    "hudHint": null
+  }
+}

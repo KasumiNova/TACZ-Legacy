@@ -1,5 +1,6 @@
 package com.tacz.legacy.client.render.item
 
+import com.tacz.legacy.client.gui.WeaponGunsmithImmersiveRuntime
 import com.tacz.legacy.client.render.texture.TaczTextureResourceResolver
 import com.tacz.legacy.client.sound.TaczSoundEngine
 import com.tacz.legacy.client.input.WeaponAimInputStateRegistry
@@ -49,6 +50,8 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
     private val aimingBlendStateBySessionId: MutableMap<String, AimingBlendState> = linkedMapOf()
     private val firstPersonJumpSwayStateBySessionId: MutableMap<String, FirstPersonJumpSwayState> = linkedMapOf()
     private val firstPersonShootSwayStateBySessionId: MutableMap<String, FirstPersonShootSwayState> = linkedMapOf()
+    private val clipPoseTransitionStateBySessionId: MutableMap<String, ClipPoseTransitionState> = linkedMapOf()
+    private val refitViewContinuityByGunId: MutableMap<String, RefitViewContinuityCache> = linkedMapOf()
     private val animationSoundStateBySessionId: MutableMap<String, AnimationSoundPlaybackState> = linkedMapOf()
     private val animationSoundEventAvailabilityById: MutableMap<String, Boolean> = linkedMapOf()
     @Volatile
@@ -101,9 +104,14 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         renderAnimationStateBySessionId[sessionId]?.let { state ->
             state.lastGunId = null
             state.drawStartedAtMillis = -1L
+            state.putAwayStartedAtMillis = -1L
+            state.putAwayDurationMillis = -1L
+            state.putAwayRenderGunId = null
             state.activeLoopClipType = null
             state.activeLoopStartedAtMillis = 0L
         }
+        clipPoseTransitionStateBySessionId.remove(sessionId)
+        refitViewContinuityByGunId.clear()
         firstPersonShootSwayStateBySessionId.remove(sessionId)
         firstPersonReferenceOffsets = FirstPersonReferenceOffsets.EMPTY
     }
@@ -115,6 +123,8 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         aimingBlendStateBySessionId.clear()
         firstPersonJumpSwayStateBySessionId.clear()
         firstPersonShootSwayStateBySessionId.clear()
+        clipPoseTransitionStateBySessionId.clear()
+        refitViewContinuityByGunId.clear()
         animationSoundStateBySessionId.clear()
         animationSoundEventAvailabilityById.clear()
         LegacyBoneVisibilityPolicy.clearAttachmentCaches()
@@ -139,23 +149,26 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
             ?: return
 
         val display = GunDisplayRuntime.registry().snapshot().findDefinition(gunId)
-        val geoModel = resolveGeoModel(display, minecraft)
-        val animationPose = resolveAnimationPose(
+        val resolvedAnimationPose = resolveAnimationPose(
             gunId = gunId,
             display = display,
             minecraft = minecraft,
             enableSoundDispatch = firstPerson,
             allowContextualFallback = firstPerson
         )
+        val playbackGunId = resolvedAnimationPose?.playbackGunId ?: gunId
+        val playbackDisplay = resolvedAnimationPose?.playbackDisplay ?: display
+        val geoModel = resolveGeoModel(playbackDisplay, minecraft)
+        val animationPose = resolvedAnimationPose?.pose
         val runtimeAnimationSnapshot = resolveRuntimeAnimationSnapshot(gunId, minecraft)
         val texture = TaczTextureResourceResolver.resolveForBind(
-            rawPath = resolveRenderTexturePath(display),
-            sourceId = display?.sourceId,
+            rawPath = resolveRenderTexturePath(playbackDisplay),
+            sourceId = playbackDisplay?.sourceId,
             fallback = DEFAULT_GUN_TEXTURE,
             minecraft = minecraft
         ) ?: DEFAULT_GUN_TEXTURE
         val handContext = if (firstPerson) {
-            resolveFirstPersonHandContext(gunId, texture, minecraft)
+            resolveFirstPersonHandContext(playbackGunId, texture, minecraft)
         } else {
             null
         }
@@ -336,6 +349,13 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         val preferRightHandPos = normalizedNames.contains(HAND_BONE_RIGHT_POS)
         val referenceOffsetCollector = if (firstPerson) linkedMapOf<String, FirstPersonReferenceOffset>() else null
 
+        val gunId = itemStack.item
+            .registryName
+            ?.path
+            ?.trim()
+            ?.lowercase()
+            ?.ifBlank { null }
+
         GlStateManager.pushMatrix()
 
         if (firstPerson) {
@@ -346,18 +366,16 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
                     runtimeAnimationSnapshot = runtimeAnimationSnapshot,
                     aimingProgress = aimingProgress
                 )
-                val gunId = itemStack.item
-                    .registryName
-                    ?.path
-                    ?.trim()
-                    ?.lowercase()
-                    ?.ifBlank { null }
                 applyFirstPersonJumpingSway(
                     player = currentPlayer,
                     partialTicks = partialTicks,
                     gunId = gunId
                 )
                 applyFirstPersonHoldingSway(currentPlayer, partialTicks)
+                applyFirstPersonIdleMicroJitter(
+                    player = currentPlayer,
+                    aimingProgress = aimingProgress
+                )
             }
 
             // 对齐 TACZ 1.20 第一人称变换链:
@@ -365,7 +383,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
             // 无额外缩放——模型以原生基岩比例（1像素=1/16方块）渲染。
             GlStateManager.translate(0.0, 1.5, 0.0)
             GlStateManager.rotate(180f, 0f, 0f, 1f)
-            if (!applyFirstPersonPositioningBoneAlignment(model, animationPose, aimingProgress)) {
+            if (!applyFirstPersonPositioningBoneAlignment(model, animationPose, aimingProgress, gunId)) {
                 GlStateManager.translate(0.0, 0.0, FIRST_PERSON_Z_OFFSET.toDouble())
             }
         } else {
@@ -440,7 +458,8 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
     private fun applyFirstPersonPositioningBoneAlignment(
         model: LegacyGeoModel,
         animationPose: LegacyAnimationPose?,
-        aimingProgress: Float
+        aimingProgress: Float,
+        gunId: String?
     ): Boolean {
         val blendWeight = resolveFirstPersonPositioningBlendWeight(aimingProgress)
         val idleBone = findFirstPersonPositioningBoneByName(model, IDLE_VIEW_BONE)
@@ -452,10 +471,56 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
 
         val fromTransform = resolveFirstPersonPositioningTransform(model, fromBone, animationPose)
         val toTransform = resolveFirstPersonPositioningTransform(model, toBone, animationPose)
-        val blendedTransform = if (fromBone.name == toBone.name) {
+        var blendedTransform = if (fromBone.name == toBone.name) {
             fromTransform
         } else {
             interpolateRigidTransform(fromTransform, toTransform, blendWeight)
+        }
+
+        // 对齐 TACZ 1.20 RefitTransform：
+        //   base(idle/iron) -> refit_view(overview) -> refit_<slot>_view(close-up)
+        val refit = WeaponGunsmithImmersiveRuntime.resolveRefitViewStateForGun(gunId)
+        if (refit == null) {
+            gunId?.let { refitViewContinuityByGunId.remove(it) }
+        } else {
+            val opening = refit.openingProgress.coerceIn(0.0f, 1.0f)
+            if (opening > 0.0f) {
+                val continuity = gunId?.let(refitViewContinuityByGunId::get)
+                val shouldUseCachedFrom = continuity != null &&
+                    refit.transformProgress.coerceIn(0.0f, 1.0f) <= 0.0001f &&
+                    (continuity.lastCurrentSlot != refit.currentSlot || continuity.lastOldSlot != refit.oldSlot)
+
+                val fromRefitBone = findFirstPersonPositioningBoneByName(model, refitViewBoneName(refit.oldSlot))
+                    ?: findFirstPersonPositioningBoneByName(model, REFIT_VIEW_BONE)
+                val toRefitBone = findFirstPersonPositioningBoneByName(model, refitViewBoneName(refit.currentSlot))
+                    ?: fromRefitBone
+
+                val cachedFromTransform = if (shouldUseCachedFrom) continuity.lastTransform else null
+                val fromRefitTransform = cachedFromTransform
+                    ?: fromRefitBone?.let { resolveFirstPersonPositioningTransform(model, it, animationPose) }
+                val toRefitTransform = toRefitBone?.let { resolveFirstPersonPositioningTransform(model, it, animationPose) }
+
+                if (fromRefitTransform != null) {
+                    blendedTransform = interpolateRigidTransform(blendedTransform, fromRefitTransform, opening)
+                }
+
+                if (toRefitTransform != null) {
+                    val eased = easeOutCubic(refit.transformProgress.coerceIn(0.0f, 1.0f))
+                    blendedTransform = interpolateRigidTransform(blendedTransform, toRefitTransform, opening * eased)
+                }
+
+                gunId?.let {
+                    refitViewContinuityByGunId[it] = RefitViewContinuityCache(
+                        lastTransform = blendedTransform,
+                        lastOpeningProgress = opening,
+                        lastOldSlot = refit.oldSlot,
+                        lastCurrentSlot = refit.currentSlot,
+                        lastTransformProgress = refit.transformProgress
+                    )
+                }
+            } else {
+                gunId?.let { refitViewContinuityByGunId.remove(it) }
+            }
         }
 
         // TACZ 1.20: T(0, 1.5, 0) * M_inv * T(0, -1.5, 0)
@@ -466,6 +531,19 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
 
         GlStateManager.translate(0.0, -1.5, 0.0)
         return true
+    }
+
+    private fun easeOutCubic(t: Float): Float {
+        val clamped = t.coerceIn(0.0f, 1.0f)
+        val inv = 1.0f - clamped
+        return 1.0f - inv * inv * inv
+    }
+
+    private fun refitViewBoneName(slot: com.tacz.legacy.common.infrastructure.mc.weapon.WeaponAttachmentSlot?): String {
+        if (slot == null) {
+            return REFIT_VIEW_BONE
+        }
+        return "$REFIT_VIEW_PREFIX${slot.name.lowercase()}$REFIT_VIEW_SUFFIX"
     }
 
     internal fun resolveFirstPersonPositioningBlendWeight(aimingProgress: Float): Float {
@@ -502,6 +580,45 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         }
         if (kotlin.math.abs(sway.postRotateYawDegrees) > CAMERA_EPSILON_DEGREES) {
             GlStateManager.rotate(sway.postRotateYawDegrees, 0f, 1f, 0f)
+        }
+    }
+
+    private fun applyFirstPersonIdleMicroJitter(
+        player: AbstractClientPlayer,
+        aimingProgress: Float
+    ) {
+        if (!ENABLE_FIRST_PERSON_IDLE_MICRO_JITTER) {
+            return
+        }
+
+        val intensity = (1f - aimingProgress.coerceIn(0f, 1f)).coerceIn(0f, 1f)
+        if (intensity <= 0.0001f) {
+            return
+        }
+
+        val uuid = player.uniqueID
+        val seed = (uuid.mostSignificantBits xor uuid.leastSignificantBits).toInt()
+        val t = (System.nanoTime().toDouble() / 1_000_000_000.0 + seed * 0.0001).toFloat()
+
+        // 呼吸感：对齐 TACZ 数据驱动 idle 动画的幅度（约 2-3° 旋转，~0.5cm 平移）。
+        val yaw = kotlin.math.sin(t * 0.65f + 0.7f) * 0.55f * intensity
+        val pitch = kotlin.math.sin(t * 0.50f + 1.9f) * 0.40f * intensity
+        val roll = kotlin.math.sin(t * 0.80f + 2.6f) * 0.25f * intensity
+
+        if (kotlin.math.abs(roll) > CAMERA_EPSILON_DEGREES) {
+            GlStateManager.rotate(roll, 0f, 0f, 1f)
+        }
+        if (kotlin.math.abs(yaw) > CAMERA_EPSILON_DEGREES) {
+            GlStateManager.rotate(yaw, 0f, 1f, 0f)
+        }
+        if (kotlin.math.abs(pitch) > CAMERA_EPSILON_DEGREES) {
+            GlStateManager.rotate(pitch, 1f, 0f, 0f)
+        }
+
+        val offsetX = kotlin.math.sin(t * 0.45f + 0.2f) * 0.008f * intensity
+        val offsetY = kotlin.math.sin(t * 0.35f + 1.4f) * 0.006f * intensity
+        if (kotlin.math.abs(offsetX) > CAMERA_EPSILON_RADIANS || kotlin.math.abs(offsetY) > CAMERA_EPSILON_RADIANS) {
+            GlStateManager.translate(offsetX.toDouble(), offsetY.toDouble(), 0.0)
         }
     }
 
@@ -1045,7 +1162,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
             minecraft = minecraft,
             enableSoundDispatch = false,
             allowContextualFallback = true
-        ) ?: return null
+        )?.pose ?: return null
         val cameraRotation = animationPose.boneTransformsByName.entries
             .firstOrNull { (name, _) -> normalizeBoneName(name) == CAMERA_BONE }
             ?.value
@@ -1966,7 +2083,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         minecraft: Minecraft,
         enableSoundDispatch: Boolean,
         allowContextualFallback: Boolean
-    ): LegacyAnimationPose? {
+    ): ResolvedAnimationPose? {
         if (display == null) {
             return null
         }
@@ -1988,14 +2105,29 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
             allowContextualFallback = allowContextualFallback
         ) ?: return null
 
-        val primaryClip = findAnimationClip(animationSet, playback.clipName) ?: return null
+        val playbackGunId = playback.playbackGunId ?: gunId
+        val playbackDisplay = if (playbackGunId == gunId) {
+            display
+        } else {
+            GunDisplayRuntime.registry().snapshot().findDefinition(playbackGunId) ?: display
+        }
+        val playbackAnimationSet = if (playbackGunId == gunId) {
+            animationSet
+        } else {
+            resolveAnimationSet(playbackDisplay, minecraft)
+                ?: resolveDefaultAnimationSet(playbackDisplay, minecraft)
+                ?: animationSet
+        }
+        val playbackDefaultAnimationSet = resolveDefaultAnimationSet(playbackDisplay, minecraft)
+
+        val primaryClip = findAnimationClip(playbackAnimationSet, playback.clipName) ?: return null
         if (enableSoundDispatch && minecraft.renderViewEntity === player) {
             dispatchAnimationSoundEffects(
                 sessionId = sessionId,
-                gunId = gunId,
+                gunId = playbackGunId,
                 clipType = playback.clipType,
                 clip = primaryClip,
-                display = display,
+                display = playbackDisplay,
                 elapsedMillis = playback.elapsedMillis,
                 progress = playback.progress,
                 player = player
@@ -2007,22 +2139,174 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
             elapsedMillis = playback.elapsedMillis
         )
 
-        // 关键修复：Fire/Reload 等片段经常不包含 hand/view 骨骼，
-        // 若直接单播会让手部锚点退回默认姿态，出现“举手”现象。
-        // 对齐 TACZ 状态机思路：非 idle 时以 idle 作为基座，再叠加当前片段。
-        if (playback.clipType == WeaponAnimationClipType.IDLE) {
-            return primaryPose
+        // 对齐 TACZ 状态机“基座 + 叠加轨道”思路：
+        // 1) 优先使用 static_idle 作为基础姿态并持续循环；
+        // 2) 若缺失 static_idle，则在非 IDLE 片段下回退为 idle 基座；
+        // 3) primary 始终作为覆盖层，确保 FIRE/RELOAD 等动作可正确覆盖关键骨骼。
+        val staticBaseResolved = resolveStaticBaseClip(
+            display = playbackDisplay,
+            animationSet = playbackAnimationSet,
+            fallbackAnimationSet = playbackDefaultAnimationSet
+        )
+
+        val targetPose = when {
+            staticBaseResolved != null -> {
+                val (_, staticBaseClip) = staticBaseResolved
+                if (normalizeClipToken(staticBaseClip.name) == normalizeClipToken(primaryClip.name)) {
+                    primaryPose
+                } else {
+                    val staticBasePose = sampleAnimationPose(
+                        clip = staticBaseClip,
+                        progress = 0f,
+                        elapsedMillis = nowMillis
+                    )
+                    mergeAnimationPose(staticBasePose, primaryPose)
+                }
+            }
+
+            playback.clipType == WeaponAnimationClipType.IDLE -> primaryPose
+
+            else -> {
+                val idleResolved = resolveClipByType(
+                    display = playbackDisplay,
+                    animationSet = playbackAnimationSet,
+                    clipType = WeaponAnimationClipType.IDLE,
+                    fallbackAnimationSet = playbackDefaultAnimationSet
+                )
+                if (idleResolved == null) {
+                    primaryPose
+                } else {
+                    val (_, idleClip) = idleResolved
+                    if (normalizeClipToken(idleClip.name) == normalizeClipToken(primaryClip.name)) {
+                        primaryPose
+                    } else {
+                        val idlePose = sampleAnimationPose(
+                            clip = idleClip,
+                            progress = 0f,
+                            elapsedMillis = nowMillis
+                        )
+                        mergeAnimationPose(idlePose, primaryPose)
+                    }
+                }
+            }
         }
 
-        val idleResolved = resolveClipByType(display, animationSet, WeaponAnimationClipType.IDLE)
-            ?: return primaryPose
-        val (_, idleClip) = idleResolved
-        val idlePose = sampleAnimationPose(
-            clip = idleClip,
-            progress = 0f,
-            elapsedMillis = nowMillis
+        val transitionedPose = applyClipPoseTransition(
+            sessionId = sessionId,
+            gunId = playbackGunId,
+            clipType = playback.clipType,
+            clipName = primaryClip.name,
+            targetPose = targetPose,
+            nowMillis = nowMillis
         )
-        return mergeAnimationPose(idlePose, primaryPose)
+
+        return ResolvedAnimationPose(
+            pose = transitionedPose,
+            playbackGunId = playbackGunId,
+            playbackDisplay = playbackDisplay
+        )
+    }
+
+    private fun applyClipPoseTransition(
+        sessionId: String,
+        gunId: String,
+        clipType: WeaponAnimationClipType,
+        clipName: String,
+        targetPose: LegacyAnimationPose,
+        nowMillis: Long
+    ): LegacyAnimationPose {
+        val state = clipPoseTransitionStateBySessionId.getOrPut(sessionId) { ClipPoseTransitionState() }
+
+        if (state.lastGunId != gunId) {
+            state.lastGunId = gunId
+            state.lastClipKey = null
+            state.lastClipType = null
+            state.lastPose = null
+            state.transitionFromPose = null
+            state.transitionStartedAtMillis = -1L
+            state.transitionDurationMillis = 0L
+        }
+
+        val clipKey = "${clipType.name}:$clipName"
+        val clipChanged = state.lastClipKey != null && state.lastClipKey != clipKey
+        if (clipChanged) {
+            state.transitionFromPose = state.lastPose ?: targetPose
+            state.transitionStartedAtMillis = nowMillis
+            state.transitionDurationMillis = resolveClipPoseTransitionDurationMillis(
+                from = state.lastClipType,
+                to = clipType
+            )
+        }
+
+        val fromPose = state.transitionFromPose
+        val duration = state.transitionDurationMillis
+        val startedAt = state.transitionStartedAtMillis
+
+        val blendedPose = if (fromPose != null && duration > 0L && startedAt >= 0L) {
+            val t = ((nowMillis - startedAt).toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+            val eased = easeOutCubic(t)
+            if (t >= 1f) {
+                state.transitionFromPose = null
+                targetPose
+            } else {
+                blendAnimationPose(fromPose, targetPose, eased)
+            }
+        } else {
+            targetPose
+        }
+
+        state.lastGunId = gunId
+        state.lastClipKey = clipKey
+        state.lastClipType = clipType
+        state.lastPose = blendedPose
+        return blendedPose
+    }
+
+    private fun resolveClipPoseTransitionDurationMillis(
+        from: WeaponAnimationClipType?,
+        to: WeaponAnimationClipType
+    ): Long {
+        // TACZ 上游的 transitionTimeS 通常很短（0.08~0.15s），这里用保守默认值。
+        if (from == null || from == to) {
+            return 0L
+        }
+        if (from == WeaponAnimationClipType.RELOAD || to == WeaponAnimationClipType.RELOAD) {
+            return 130L
+        }
+        if (from == WeaponAnimationClipType.FIRE || to == WeaponAnimationClipType.FIRE) {
+            return 100L
+        }
+        return 90L
+    }
+
+    private fun blendAnimationPose(from: LegacyAnimationPose, to: LegacyAnimationPose, t: Float): LegacyAnimationPose {
+        if (t <= 0f) {
+            return from
+        }
+        if (t >= 1f) {
+            return to
+        }
+
+        val merged = linkedMapOf<String, LegacyBoneTransform>()
+        val keys = linkedSetOf<String>()
+        keys.addAll(from.boneTransformsByName.keys)
+        keys.addAll(to.boneTransformsByName.keys)
+
+        keys.forEach { name ->
+            val a = from.boneTransformsByName[name]
+            val b = to.boneTransformsByName[name]
+            when {
+                a == null && b == null -> Unit
+                a == null -> merged[name] = requireNotNull(b)
+                b == null -> merged[name] = requireNotNull(a)
+                else -> merged[name] = LegacyBoneTransform(
+                    positionOffset = lerp(a.positionOffset, b.positionOffset, t),
+                    rotationOffset = lerp(a.rotationOffset, b.rotationOffset, t)
+                )
+            }
+        }
+
+        return LegacyAnimationPose(merged)
     }
 
     private fun dispatchAnimationSoundEffects(
@@ -2429,6 +2713,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         nowMillis: Long,
         allowContextualFallback: Boolean
     ): ResolvedPlaybackClip? {
+        val defaultAnimationSet = resolveDefaultAnimationSet(display, minecraft)
         val runtimeSnapshot = WeaponRuntimeMcBridge.animationSnapshotOrNull(sessionId)
         val runtimePlayback = resolveRuntimePlaybackClip(
             runtimeSnapshot = runtimeSnapshot,
@@ -2437,11 +2722,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
             animationSet = animationSet
         )
         if (!allowContextualFallback) {
-            return runtimePlayback ?: resolveStaticIdlePlayback(display, animationSet)
-        }
-
-        if (shouldPreferRuntimePlaybackClip(runtimePlayback?.clipType)) {
-            return runtimePlayback
+            return runtimePlayback ?: resolveStaticIdlePlayback(display, animationSet, defaultAnimationSet)
         }
 
         val contextualPlayback = resolveContextualPlaybackClip(
@@ -2451,17 +2732,26 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
             minecraft = minecraft,
             player = player,
             sessionId = sessionId,
-            nowMillis = nowMillis
+            nowMillis = nowMillis,
+            defaultAnimationSet = defaultAnimationSet
         )
+        if (contextualPlayback?.clipType == WeaponAnimationClipType.PUT_AWAY) {
+            return contextualPlayback
+        }
 
-        return contextualPlayback ?: runtimePlayback ?: resolveStaticIdlePlayback(display, animationSet)
+        if (shouldPreferRuntimePlaybackClip(runtimePlayback?.clipType)) {
+            return runtimePlayback
+        }
+
+        return contextualPlayback ?: runtimePlayback ?: resolveStaticIdlePlayback(display, animationSet, defaultAnimationSet)
     }
 
     private fun resolveStaticIdlePlayback(
         display: GunDisplayDefinition,
-        animationSet: LegacyAnimationSet
+        animationSet: LegacyAnimationSet,
+        fallbackAnimationSet: LegacyAnimationSet?
     ): ResolvedPlaybackClip? {
-        resolveClipByType(display, animationSet, WeaponAnimationClipType.IDLE)?.let { (clipName, _) ->
+        resolveClipByType(display, animationSet, WeaponAnimationClipType.IDLE, fallbackAnimationSet)?.let { (clipName, _) ->
             return ResolvedPlaybackClip(
                 clipType = WeaponAnimationClipType.IDLE,
                 clipName = clipName,
@@ -2506,17 +2796,93 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         minecraft: Minecraft,
         player: AbstractClientPlayer,
         sessionId: String,
-        nowMillis: Long
+        nowMillis: Long,
+        defaultAnimationSet: LegacyAnimationSet?
     ): ResolvedPlaybackClip? {
         val state = renderAnimationStateBySessionId.getOrPut(sessionId) { RenderAnimationSessionState() }
         if (state.lastGunId != gunId) {
+            val previousGunId = state.lastGunId
             state.lastGunId = gunId
-            state.drawStartedAtMillis = nowMillis
             state.activeLoopClipType = null
             state.activeLoopStartedAtMillis = nowMillis
+            state.putAwayRenderGunId = null
+
+            // 收枪（put-away）：枪切换时先播放 PUT_AWAY clip，结束后再开始 DRAW。
+            val previousDisplay = previousGunId
+                ?.let { GunDisplayRuntime.registry().snapshot().findDefinition(it) }
+            val previousDefaultAnimationSet = previousDisplay
+                ?.let { resolveDefaultAnimationSet(it, minecraft) }
+            val previousAnimationSet = previousDisplay
+                ?.let { resolveAnimationSet(it, minecraft) ?: previousDefaultAnimationSet }
+            val putAwayClip = if (previousDisplay != null && previousAnimationSet != null) {
+                resolveClipByType(
+                    display = previousDisplay,
+                    animationSet = previousAnimationSet,
+                    clipType = WeaponAnimationClipType.PUT_AWAY,
+                    fallbackAnimationSet = previousDefaultAnimationSet
+                )
+            } else {
+                null
+            }
+            if (previousGunId != null && putAwayClip != null) {
+                val putDurationMillis = (putAwayClip.second.durationSeconds * 1000f).toLong().coerceAtLeast(1L)
+                state.putAwayStartedAtMillis = nowMillis
+                state.putAwayDurationMillis = putDurationMillis
+                state.drawStartedAtMillis = nowMillis + putDurationMillis
+                state.putAwayRenderGunId = previousGunId
+            } else {
+                state.putAwayStartedAtMillis = -1L
+                state.putAwayDurationMillis = -1L
+                state.drawStartedAtMillis = nowMillis
+                state.putAwayRenderGunId = null
+            }
         }
 
-        resolveClipByType(display, animationSet, WeaponAnimationClipType.DRAW)?.let { (clipName, clip) ->
+        // PUT_AWAY 播放中
+        val putAwayStartedAt = state.putAwayStartedAtMillis
+        if (putAwayStartedAt >= 0L) {
+            val elapsed = (nowMillis - putAwayStartedAt).coerceAtLeast(0L)
+            val durationMillis = state.putAwayDurationMillis.coerceAtLeast(1L)
+            val putAwayGunId = state.putAwayRenderGunId
+            if (putAwayGunId != null && elapsed < durationMillis) {
+                val putAwayDisplay = GunDisplayRuntime.registry().snapshot().findDefinition(putAwayGunId)
+                val putAwayDefaultAnimationSet = putAwayDisplay
+                    ?.let { resolveDefaultAnimationSet(it, minecraft) }
+                val putAwayAnimationSet = putAwayDisplay
+                    ?.let { resolveAnimationSet(it, minecraft) ?: putAwayDefaultAnimationSet }
+                val putAwayResolved = if (putAwayDisplay != null && putAwayAnimationSet != null) {
+                    resolveClipByType(
+                        display = putAwayDisplay,
+                        animationSet = putAwayAnimationSet,
+                        clipType = WeaponAnimationClipType.PUT_AWAY,
+                        fallbackAnimationSet = putAwayDefaultAnimationSet
+                    )
+                } else {
+                    null
+                }
+
+                if (putAwayResolved != null) {
+                    return ResolvedPlaybackClip(
+                        clipType = WeaponAnimationClipType.PUT_AWAY,
+                        clipName = putAwayResolved.first,
+                        progress = (elapsed.toFloat() / durationMillis.toFloat()).coerceIn(0f, 1f),
+                        elapsedMillis = elapsed,
+                        playbackGunId = putAwayGunId
+                    )
+                }
+            }
+            if (elapsed >= durationMillis) {
+                state.putAwayStartedAtMillis = -1L
+                state.putAwayRenderGunId = null
+            }
+        }
+
+        resolveClipByType(
+            display = display,
+            animationSet = animationSet,
+            clipType = WeaponAnimationClipType.DRAW,
+            fallbackAnimationSet = defaultAnimationSet
+        )?.let { (clipName, clip) ->
             val drawStartedAt = state.drawStartedAtMillis
             if (drawStartedAt >= 0L) {
                 val elapsed = (nowMillis - drawStartedAt).coerceAtLeast(0L)
@@ -2552,7 +2918,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
                 WeaponAnimationClipType.IDLE
             )
 
-            player.isSprinting -> listOf(
+            isRunningContext(minecraft, player) -> listOf(
                 WeaponAnimationClipType.RUN,
                 WeaponAnimationClipType.WALK,
                 WeaponAnimationClipType.IDLE
@@ -2567,7 +2933,21 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         }
 
         preferredClipTypes.forEach { clipType ->
-            val resolved = resolveClipByType(display, animationSet, clipType) ?: return@forEach
+            val resolved = resolveContextualLoopClipByType(
+                display = display,
+                animationSet = animationSet,
+                clipType = clipType,
+                fallbackAnimationSet = defaultAnimationSet,
+                player = player,
+                aimingProgress = aimingProgress
+            )
+                ?: resolveClipByType(
+                    display = display,
+                    animationSet = animationSet,
+                    clipType = clipType,
+                    fallbackAnimationSet = defaultAnimationSet
+                )
+                ?: return@forEach
             val (clipName, clip) = resolved
 
             if (state.activeLoopClipType != clipType) {
@@ -2594,6 +2974,128 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         return null
     }
 
+    private fun resolveContextualLoopClipByType(
+        display: GunDisplayDefinition,
+        animationSet: LegacyAnimationSet,
+        clipType: WeaponAnimationClipType,
+        fallbackAnimationSet: LegacyAnimationSet?,
+        player: AbstractClientPlayer,
+        aimingProgress: Float
+    ): Pair<String, LegacyAnimationClip>? {
+        val preferredKeywords = when (clipType) {
+            WeaponAnimationClipType.WALK -> resolveWalkClipKeywordsByContext(
+                aimingProgress = aimingProgress,
+                moveForward = player.moveForward,
+                moveStrafing = player.moveStrafing
+            )
+
+            WeaponAnimationClipType.RUN -> resolveRunClipKeywordsByContext(
+                onGround = player.onGround
+            )
+
+            WeaponAnimationClipType.AIM -> AIM_CONTEXTUAL_CLIP_KEYWORDS
+            else -> return null
+        }
+
+        return resolveClipByPreferredKeywords(
+            display = display,
+            animationSet = animationSet,
+            preferredKeywords = preferredKeywords,
+            fallbackAnimationSet = fallbackAnimationSet
+        )
+    }
+
+    private fun resolveClipByPreferredKeywords(
+        display: GunDisplayDefinition,
+        animationSet: LegacyAnimationSet,
+        preferredKeywords: List<String>,
+        fallbackAnimationSet: LegacyAnimationSet?
+    ): Pair<String, LegacyAnimationClip>? {
+        val normalizedKeywords = preferredKeywords
+            .map(::normalizeClipToken)
+            .filter { it.isNotEmpty() }
+        if (normalizedKeywords.isEmpty()) {
+            return null
+        }
+
+        val displayClipNames = display.animationClipNames.orEmpty()
+        if (displayClipNames.isNotEmpty()) {
+            val preferredByDisplay = selectClipName(
+                clipNames = displayClipNames,
+                preferredKeywords = normalizedKeywords
+            )
+            if (preferredByDisplay != null) {
+                findAnimationClip(animationSet, preferredByDisplay)?.let { clip ->
+                    return clip.name to clip
+                }
+                fallbackAnimationSet
+                    ?.let { fallback -> findAnimationClip(fallback, preferredByDisplay) }
+                    ?.let { clip -> return clip.name to clip }
+            }
+        }
+
+        val preferredInPrimary = selectClipName(
+            clipNames = animationSet.clipsByName.keys.toList(),
+            preferredKeywords = normalizedKeywords
+        )
+        if (preferredInPrimary != null) {
+            findAnimationClip(animationSet, preferredInPrimary)?.let { clip ->
+                return clip.name to clip
+            }
+        }
+
+        fallbackAnimationSet?.let { fallback ->
+            val preferredInFallback = selectClipName(
+                clipNames = fallback.clipsByName.keys.toList(),
+                preferredKeywords = normalizedKeywords
+            )
+            if (preferredInFallback != null) {
+                findAnimationClip(fallback, preferredInFallback)?.let { clip ->
+                    return clip.name to clip
+                }
+            }
+        }
+
+        return null
+    }
+
+    internal fun resolveWalkClipKeywordsByContext(
+        aimingProgress: Float,
+        moveForward: Float,
+        moveStrafing: Float
+    ): List<String> {
+        val forward = moveForward
+        val strafe = moveStrafing
+        val absForward = kotlin.math.abs(forward)
+        val absStrafe = kotlin.math.abs(strafe)
+
+        if (aimingProgress > WALK_AIMING_PROGRESS_THRESHOLD) {
+            return listOf("walk_aiming", "walk", "move", "idle")
+        }
+
+        if (absForward >= MOVEMENT_INPUT_EPSILON && absForward >= absStrafe) {
+            return if (forward > 0f) {
+                listOf("walk_forward", "walk", "move")
+            } else {
+                listOf("walk_backward", "walk", "move")
+            }
+        }
+
+        if (absStrafe >= MOVEMENT_INPUT_EPSILON) {
+            return listOf("walk_sideway", "walk", "move")
+        }
+
+        return listOf("walk", "move", "idle")
+    }
+
+    internal fun resolveRunClipKeywordsByContext(onGround: Boolean): List<String> {
+        return if (onGround) {
+            listOf("run", "run_start", "sprint", "run_hold")
+        } else {
+            listOf("run_hold", "run", "sprint")
+        }
+    }
+
     private fun isAimingContext(minecraft: Minecraft, player: AbstractClientPlayer): Boolean {
         val sessionId = clientSessionId(player.uniqueID.toString())
         val bridgedAiming = WeaponAimInputStateRegistry.resolve(sessionId)
@@ -2605,20 +3107,136 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         )
     }
 
+    private fun isRunningContext(minecraft: Minecraft, player: AbstractClientPlayer): Boolean {
+        if (player.isSprinting) {
+            return true
+        }
+        val sprintKeyDown = minecraft.gameSettings.keyBindSprint.isKeyDown
+        return sprintKeyDown && !player.isSneaking && isWalkingContext(player)
+    }
+
     private fun isWalkingContext(player: AbstractClientPlayer): Boolean {
         val movingByInput = kotlin.math.abs(player.moveForward) > 0.01f || kotlin.math.abs(player.moveStrafing) > 0.01f
         val velocitySq = player.motionX * player.motionX + player.motionZ * player.motionZ
-        return movingByInput || velocitySq > 0.0004
+        val limbSwingMoving = kotlin.math.abs(player.limbSwingAmount) > 0.01f
+        val deltaX = player.posX - player.prevPosX
+        val deltaZ = player.posZ - player.prevPosZ
+        val positionDeltaSq = deltaX * deltaX + deltaZ * deltaZ
+        return movingByInput || velocitySq > 0.0001 || limbSwingMoving || positionDeltaSq > 1.0E-6
     }
 
     private fun resolveClipByType(
         display: GunDisplayDefinition,
         animationSet: LegacyAnimationSet,
-        clipType: WeaponAnimationClipType
+        clipType: WeaponAnimationClipType,
+        fallbackAnimationSet: LegacyAnimationSet? = null
     ): Pair<String, LegacyAnimationClip>? {
-        val clipName = resolveAnimationClipName(display, clipType) ?: return null
-        val clip = findAnimationClip(animationSet, clipName) ?: return null
-        return clip.name to clip
+        val explicitName = resolveAnimationClipName(display, clipType)
+        if (explicitName != null) {
+            findAnimationClip(animationSet, explicitName)?.let { clip ->
+                return clip.name to clip
+            }
+            fallbackAnimationSet
+                ?.let { findAnimationClip(it, explicitName) }
+                ?.let { clip -> return clip.name to clip }
+        }
+
+        resolveAnimationClipNameFromSet(animationSet, clipType)
+            ?.let { candidate ->
+                findAnimationClip(animationSet, candidate)?.let { clip ->
+                    return clip.name to clip
+                }
+            }
+
+        fallbackAnimationSet?.let { fallback ->
+            resolveAnimationClipNameFromSet(fallback, clipType)
+                ?.let { candidate ->
+                    findAnimationClip(fallback, candidate)?.let { clip ->
+                        return clip.name to clip
+                    }
+                }
+        }
+
+        return null
+    }
+
+    private fun resolveStaticBaseClip(
+        display: GunDisplayDefinition,
+        animationSet: LegacyAnimationSet,
+        fallbackAnimationSet: LegacyAnimationSet? = null
+    ): Pair<String, LegacyAnimationClip>? {
+        STATIC_BASE_CLIP_CANDIDATES.forEach { candidate ->
+            findAnimationClip(animationSet, candidate)?.let { clip ->
+                return clip.name to clip
+            }
+        }
+
+        resolveStaticBaseClipNameFromSet(animationSet)
+            ?.let { candidate ->
+                findAnimationClip(animationSet, candidate)?.let { clip ->
+                    return clip.name to clip
+                }
+            }
+
+        fallbackAnimationSet?.let { fallback ->
+            STATIC_BASE_CLIP_CANDIDATES.forEach { candidate ->
+                findAnimationClip(fallback, candidate)?.let { clip ->
+                    return clip.name to clip
+                }
+            }
+
+            resolveStaticBaseClipNameFromSet(fallback)
+                ?.let { candidate ->
+                    findAnimationClip(fallback, candidate)?.let { clip ->
+                        return clip.name to clip
+                    }
+                }
+        }
+
+        // 防御：某些枪包会把 static_idle 解析进 animationClipNames，
+        // 但实际 clip 仅存在于 default animation（fallback set）中。
+        val displayClipNames = display.animationClipNames.orEmpty()
+        if (displayClipNames.isNotEmpty()) {
+            val preferredByDisplay = selectClipName(
+                clipNames = displayClipNames,
+                preferredKeywords = STATIC_BASE_CLIP_CANDIDATES
+            )
+            if (preferredByDisplay != null) {
+                findAnimationClip(animationSet, preferredByDisplay)?.let { clip ->
+                    return clip.name to clip
+                }
+                fallbackAnimationSet
+                    ?.let { fallback -> findAnimationClip(fallback, preferredByDisplay) }
+                    ?.let { clip -> return clip.name to clip }
+            }
+        }
+
+        return null
+    }
+
+    private fun resolveStaticBaseClipNameFromSet(animationSet: LegacyAnimationSet): String? {
+        return resolveStaticBaseClipNameFromCandidates(animationSet.clipsByName.keys.toList())
+    }
+
+    internal fun resolveStaticBaseClipNameFromCandidates(clipNames: List<String>): String? {
+        if (clipNames.isEmpty()) {
+            return null
+        }
+        return selectClipName(
+            clipNames = clipNames,
+            preferredKeywords = STATIC_BASE_CLIP_CANDIDATES
+        )
+    }
+
+    private fun resolveAnimationClipNameFromSet(
+        animationSet: LegacyAnimationSet,
+        clipType: WeaponAnimationClipType
+    ): String? {
+        val clipNames = animationSet.clipsByName.keys.toList()
+        if (clipNames.isEmpty()) {
+            return null
+        }
+        return resolveAnimationClipNameByCandidates(clipNames, clipType)
     }
 
     private fun findAnimationClip(animationSet: LegacyAnimationSet, clipName: String): LegacyAnimationClip? {
@@ -2650,6 +3268,14 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         if (clipNames.isEmpty()) {
             return null
         }
+
+        return resolveAnimationClipNameByCandidates(clipNames, clipType)
+    }
+
+    private fun resolveAnimationClipNameByCandidates(
+        clipNames: List<String>,
+        clipType: WeaponAnimationClipType
+    ): String? {
 
         return when (clipType) {
             WeaponAnimationClipType.IDLE -> selectClipName(
@@ -2690,12 +3316,12 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
 
             WeaponAnimationClipType.WALK -> selectClipName(
                 clipNames,
-                preferredKeywords = listOf("walk", "move")
+                preferredKeywords = listOf("walk_aiming", "walk_forward", "walk_sideway", "walk_backward", "walk", "move")
             )
 
             WeaponAnimationClipType.RUN -> selectClipName(
                 clipNames,
-                preferredKeywords = listOf("run", "sprint")
+                preferredKeywords = listOf("run_hold", "run", "sprint", "run_start")
             )
 
             WeaponAnimationClipType.AIM -> selectClipName(
@@ -2766,7 +3392,10 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
     }
 
     private fun resolveDefaultAnimationSet(display: GunDisplayDefinition, minecraft: Minecraft): LegacyAnimationSet? {
-        val fallbackPath = resolveDefaultAnimationAssetPath(display.useDefaultAnimation) ?: return null
+        val fallbackPath = resolveDefaultAnimationAssetPath(
+            defaultAnimationPath = display.defaultAnimationPath,
+            useDefaultAnimation = display.useDefaultAnimation
+        ) ?: return null
         val resource = TaczTextureResourceResolver.resolveExisting(
             rawPath = fallbackPath,
             sourceId = null,
@@ -2785,6 +3414,19 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         val parsed = parseAnimationSet(json) ?: return null
         animationCache[cacheKey] = parsed
         return parsed
+    }
+
+    internal fun resolveDefaultAnimationAssetPath(
+        defaultAnimationPath: String?,
+        useDefaultAnimation: String?
+    ): String? {
+        val explicit = defaultAnimationPath
+            ?.trim()
+            ?.ifBlank { null }
+        if (explicit != null) {
+            return explicit
+        }
+        return resolveDefaultAnimationAssetPath(useDefaultAnimation)
     }
 
     internal fun resolveDefaultAnimationAssetPath(useDefaultAnimation: String?): String? {
@@ -3275,9 +3917,6 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
     }
 
     private fun renderFallbackQuad() {
-        GlStateManager.translate(-0.5f, -0.15f, 0f)
-        GlStateManager.scale(1f, 0.55f, 1f)
-
         val tessellator = Tessellator.getInstance()
         val buffer = tessellator.buffer
         buffer.begin(GL11.GL_QUADS, DefaultVertexFormats.POSITION_TEX)
@@ -3507,16 +4146,26 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         val boneTransformsByName: Map<String, LegacyBoneTransform>
     )
 
+    private data class ResolvedAnimationPose(
+        val pose: LegacyAnimationPose,
+        val playbackGunId: String,
+        val playbackDisplay: GunDisplayDefinition
+    )
+
     private data class ResolvedPlaybackClip(
         val clipType: WeaponAnimationClipType,
         val clipName: String,
         val progress: Float,
-        val elapsedMillis: Long
+        val elapsedMillis: Long,
+        val playbackGunId: String? = null
     )
 
     private data class RenderAnimationSessionState(
         var lastGunId: String? = null,
         var drawStartedAtMillis: Long = -1L,
+        var putAwayStartedAtMillis: Long = -1L,
+        var putAwayDurationMillis: Long = -1L,
+        var putAwayRenderGunId: String? = null,
         var activeLoopClipType: WeaponAnimationClipType? = null,
         var activeLoopStartedAtMillis: Long = 0L
     )
@@ -3556,6 +4205,24 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         var lastObservedFireElapsedMillis: Long,
         var lastWasFireClip: Boolean,
         var lastGunId: String? = null
+    )
+
+    private data class ClipPoseTransitionState(
+        var lastGunId: String? = null,
+        var lastClipKey: String? = null,
+        var lastClipType: WeaponAnimationClipType? = null,
+        var lastPose: LegacyAnimationPose? = null,
+        var transitionFromPose: LegacyAnimationPose? = null,
+        var transitionStartedAtMillis: Long = -1L,
+        var transitionDurationMillis: Long = 0L
+    )
+
+    private data class RefitViewContinuityCache(
+        var lastTransform: LegacyRigidTransform,
+        var lastOpeningProgress: Float,
+        var lastOldSlot: com.tacz.legacy.common.infrastructure.mc.weapon.WeaponAttachmentSlot?,
+        var lastCurrentSlot: com.tacz.legacy.common.infrastructure.mc.weapon.WeaponAttachmentSlot?,
+        var lastTransformProgress: Float
     )
 
     private data class FirstPersonHandContext(
@@ -4335,6 +5002,9 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
     private const val IDLE_VIEW_BONE: String = "idle_view"
     private const val IRON_VIEW_BONE: String = "iron_view"
     private const val CAMERA_BONE: String = "camera"
+    private const val REFIT_VIEW_BONE: String = "refit_view"
+    private const val REFIT_VIEW_PREFIX: String = "refit_"
+    private const val REFIT_VIEW_SUFFIX: String = "_view"
     private const val MAGAZINE_BONE: String = "magazine"
     private const val ADDITIONAL_MAGAZINE_BONE: String = "additional_magazine"
     private const val BULLET_IN_BARREL_BONE: String = "bullet_in_barrel"
@@ -4366,6 +5036,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
     private const val FIRST_PERSON_SHOOT_YAW_SEED_SALT: Int = 0x2D7A2F1B
     private const val MILLIS_PER_SECOND_FLOAT: Float = 1000f
     private const val MICROS_PER_SECOND_DOUBLE: Double = 1_000_000.0
+    private const val ENABLE_FIRST_PERSON_IDLE_MICRO_JITTER: Boolean = false
     private const val DEFAULT_AIM_TIME_SECONDS: Float = 0.2f
     private const val AIM_LOOP_PROGRESS_THRESHOLD: Float = 0.02f
     private const val AIM_LOOP_RELEASE_THRESHOLD: Float = 0.01f
@@ -4387,4 +5058,17 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         WeaponAnimationClipType.DRY_FIRE,
         WeaponAnimationClipType.BOLT
     )
+    private val STATIC_BASE_CLIP_CANDIDATES: List<String> = listOf(
+        "static_idle",
+        "idle_static",
+        "base_idle"
+    )
+    private val AIM_CONTEXTUAL_CLIP_KEYWORDS: List<String> = listOf(
+        "aim",
+        "ads",
+        "aiming",
+        "aim_idle"
+    )
+    private const val WALK_AIMING_PROGRESS_THRESHOLD: Float = 0.5f
+    private const val MOVEMENT_INPUT_EPSILON: Float = 0.01f
 }

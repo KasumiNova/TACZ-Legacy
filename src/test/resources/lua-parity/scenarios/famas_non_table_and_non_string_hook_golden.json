@@ -1,0 +1,20 @@
+{
+  "scenarioId": "famas_non_table_and_non_string_hook",
+  "gunId": "famas",
+  "scriptId": "assets/tacz/scripts/famas_state_machine.lua",
+  "script": "function legacy_behavior_adjust(ctx)\n  return 10\nend\n\nfunction legacy_hud_hint(ctx)\n  return { hint = 'x' }\nend",
+  "scriptParams": {
+    "lua_knockback_scale": 1.25,
+    "lua_hud_low_mag_threshold": 2
+  },
+  "ammoInMagazine": 2,
+  "ammoReserve": 60,
+  "expected": {
+    "damageScale": 1.0,
+    "speedScale": 1.0,
+    "knockbackScale": 1.25,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 1.0,
+    "hudHint": "LUA: MAG LOW"
+  }
+}

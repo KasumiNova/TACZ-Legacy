@@ -1,5 +1,3 @@
 {
-  "textures": {
-    "particle": "minecraft:block/oak_planks"
-  }
+  "parent": "tacz:block/steel_target"
 }

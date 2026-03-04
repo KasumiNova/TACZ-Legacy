@@ -4,6 +4,13 @@ import com.tacz.legacy.common.application.gunpack.GunDisplayRuntime
 import com.tacz.legacy.common.application.gunpack.GunDisplayRuntimeSnapshot
 import com.tacz.legacy.common.application.gunpack.GunPackRuntime
 import com.tacz.legacy.common.application.gunpack.GunPackRuntimeSnapshot
+import com.tacz.legacy.common.application.gunpack.GunPackTooltipLangRuntime
+import com.tacz.legacy.common.application.gunpack.GunPackTooltipLangSnapshot
+import com.tacz.legacy.common.application.gunpack.GunPackTooltipIndexRuntime
+import com.tacz.legacy.common.application.gunpack.GunPackTooltipIndexSnapshot
+import com.tacz.legacy.common.application.gunpack.WeaponAttachmentCompatibilityRuntime
+import com.tacz.legacy.common.application.gunpack.WeaponAttachmentCompatibilitySnapshot
+import com.tacz.legacy.common.application.weapon.WeaponLuaScriptEngine
 import com.tacz.legacy.common.application.weapon.WeaponRuntime
 import com.tacz.legacy.common.application.weapon.WeaponRuntimeSnapshot
 import com.tacz.legacy.common.infrastructure.mc.registry.LegacyItems
@@ -21,6 +28,9 @@ public data class ItemRegistryDelta(
 public data class GunPackReloadOutcome(
     val gunPackSnapshot: GunPackRuntimeSnapshot,
     val gunDisplaySnapshot: GunDisplayRuntimeSnapshot,
+    val tooltipLangSnapshot: GunPackTooltipLangSnapshot,
+    val tooltipIndexSnapshot: GunPackTooltipIndexSnapshot,
+    val attachmentCompatibilitySnapshot: WeaponAttachmentCompatibilitySnapshot,
     val weaponRuntimeSnapshot: WeaponRuntimeSnapshot,
     val lockedItemRegistryPaths: Set<String>,
     val currentItemRegistryPaths: Set<String>,
@@ -34,6 +44,9 @@ public object GunPackReloadCoordinator {
 
     private val gunPackScanner: GunPackCompatibilityPreInitScanner = GunPackCompatibilityPreInitScanner()
     private val gunDisplayScanner: GunDisplayPreInitScanner = GunDisplayPreInitScanner()
+    private val tooltipLangScanner: GunPackTooltipLangPreInitScanner = GunPackTooltipLangPreInitScanner()
+    private val tooltipIndexScanner: GunPackTooltipIndexPreInitScanner = GunPackTooltipIndexPreInitScanner()
+    private val attachmentScanner: WeaponAttachmentPreInitScanner = WeaponAttachmentPreInitScanner()
 
     @Volatile
     private var configRootPath: Path? = null
@@ -87,9 +100,24 @@ public object GunPackReloadCoordinator {
         val gunDisplayReport = gunDisplayScanner.scanAndLog(configRoot, logger)
         val gunDisplaySnapshot = GunDisplayRuntime.registry().replace(gunDisplayReport)
 
+        val tooltipLangSnapshot = tooltipLangScanner.scan(configRoot, logger)
+        GunPackTooltipLangRuntime.registry().replace(tooltipLangSnapshot)
+
+        val tooltipIndexSnapshot = tooltipIndexScanner.scan(configRoot, logger)
+        GunPackTooltipIndexRuntime.registry().replace(tooltipIndexSnapshot)
+
+        val attachmentSnapshot = attachmentScanner.scan(configRoot, logger)
+        WeaponAttachmentCompatibilityRuntime.registry().replace(attachmentSnapshot)
+        val cachedLuaScripts = WeaponLuaScriptEngine.preload(gunDisplaySnapshot)
+        logger.info(
+            "[WeaponLua] cached scripts={} loadedDisplays={}",
+            cachedLuaScripts,
+            gunDisplaySnapshot.loadedCount
+        )
+
         val weaponRuntimeSnapshot = WeaponRuntime.registry().replaceFromGunPack(gunPackSnapshot)
 
-        val currentItemPaths = LegacyItems.dynamicGunRegistryPaths(gunPackSnapshot).toSet()
+        val currentItemPaths = LegacyItems.dynamicStandaloneRegistryPaths(gunPackSnapshot).toSet()
         if (initializeItemRegistryLock || lockedItemRegistryPaths.isEmpty()) {
             lockedItemRegistryPaths = currentItemPaths
         }
@@ -101,6 +129,9 @@ public object GunPackReloadCoordinator {
         return GunPackReloadOutcome(
             gunPackSnapshot = gunPackSnapshot,
             gunDisplaySnapshot = gunDisplaySnapshot,
+            tooltipLangSnapshot = tooltipLangSnapshot,
+            tooltipIndexSnapshot = tooltipIndexSnapshot,
+            attachmentCompatibilitySnapshot = attachmentSnapshot,
             weaponRuntimeSnapshot = weaponRuntimeSnapshot,
             lockedItemRegistryPaths = lockedItemRegistryPaths,
             currentItemRegistryPaths = currentItemPaths,

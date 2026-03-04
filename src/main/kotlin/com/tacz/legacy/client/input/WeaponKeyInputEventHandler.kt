@@ -1,5 +1,8 @@
 package com.tacz.legacy.client.input
 
+import com.tacz.legacy.client.gui.WeaponDebugWorkbenchGuiScreen
+import com.tacz.legacy.client.gui.WeaponGunsmithImmersiveRuntime
+import com.tacz.legacy.client.gui.WeaponImmersiveWorkbenchGuiScreen
 import com.tacz.legacy.common.domain.weapon.WeaponInput
 import com.tacz.legacy.common.infrastructure.mc.network.LegacyNetworkHandler
 import com.tacz.legacy.common.infrastructure.mc.weapon.WeaponRuntimeMcBridge
@@ -7,6 +10,7 @@ import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyGunItem
 import net.minecraft.client.Minecraft
 import net.minecraft.client.entity.EntityPlayerSP
 import net.minecraft.util.EnumHand
+import net.minecraft.util.text.TextComponentString
 import net.minecraftforge.client.event.MouseEvent
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
 import net.minecraftforge.fml.common.gameevent.InputEvent
@@ -33,6 +37,24 @@ public class WeaponKeyInputEventHandler {
         while (WeaponKeyBindings.inspectKey.isPressed) {
             WeaponRuntimeMcBridge.dispatchClientInput(player, WeaponInput.InspectPressed)
         }
+
+        while (WeaponKeyBindings.attachmentWorkbenchKey.isPressed) {
+            if (!isHoldingLegacyGun(player)) {
+                continue
+            }
+            mc.displayGuiScreen(WeaponDebugWorkbenchGuiScreen())
+        }
+
+        while (WeaponKeyBindings.immersiveWorkbenchKey.isPressed) {
+            if (!isHoldingLegacyGun(player)) {
+                continue
+            }
+
+            val gunId = currentGunId(player)
+            WeaponGunsmithImmersiveRuntime.activate(gunId)
+            mc.displayGuiScreen(WeaponImmersiveWorkbenchGuiScreen())
+            player.sendStatusMessage(TextComponentString("[TACZ] 已进入沉浸式改枪模式（实验阶段）"), true)
+        }
     }
 
     @SubscribeEvent
@@ -46,14 +68,18 @@ public class WeaponKeyInputEventHandler {
         if (player == null || mc.world == null) {
             releaseTriggerIfNeeded(player)
             lastSyncedAimingIntent = null
+            WeaponGunsmithImmersiveRuntime.deactivate()
             return
         }
 
         val holdingLegacyGun = isHoldingLegacyGun(player)
+        val heldGunId = currentGunId(player)
+        WeaponGunsmithImmersiveRuntime.deactivateIfGunChanged(heldGunId)
+        val immersiveActive = WeaponGunsmithImmersiveRuntime.isActiveForGun(heldGunId)
         val useDown = mc.gameSettings.keyBindUseItem.isKeyDown || Mouse.isButtonDown(1)
         val aimingIntent = resolveAimIntentTarget(
             hasScreen = mc.currentScreen != null,
-            holdingLegacyGun = holdingLegacyGun,
+            holdingLegacyGun = holdingLegacyGun && !immersiveActive,
             useDown = useDown,
             isSwinging = player.isSwingInProgress
         )
@@ -65,6 +91,12 @@ public class WeaponKeyInputEventHandler {
 
         if (mc.currentScreen != null || !holdingLegacyGun) {
             releaseTriggerIfNeeded(player)
+            return
+        }
+
+        if (immersiveActive) {
+            releaseTriggerIfNeeded(player)
+            suppressVanillaSwingAnimation(player)
             return
         }
 
@@ -140,6 +172,20 @@ public class WeaponKeyInputEventHandler {
             return false
         }
         return stack.item is LegacyGunItem
+    }
+
+    private fun currentGunId(player: EntityPlayerSP): String? {
+        val stack = player.heldItemMainhand
+        if (stack.isEmpty || stack.item !is LegacyGunItem) {
+            return null
+        }
+
+        return stack.item.registryName
+            ?.toString()
+            ?.substringAfter(':')
+            ?.trim()
+            ?.lowercase()
+            ?.ifBlank { null }
     }
 
     private fun releaseTriggerIfNeeded(player: EntityPlayerSP?) {

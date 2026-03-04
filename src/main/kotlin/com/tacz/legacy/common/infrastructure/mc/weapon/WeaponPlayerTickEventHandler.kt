@@ -11,16 +11,21 @@ import com.tacz.legacy.common.application.weapon.WeaponAutoSessionOrchestrator
 import com.tacz.legacy.common.application.weapon.WeaponBehaviorConfig
 import com.tacz.legacy.common.application.weapon.WeaponBehaviorResult
 import com.tacz.legacy.common.application.weapon.WeaponInaccuracyProfile
+import com.tacz.legacy.common.application.weapon.WeaponLuaScriptEngine
+import com.tacz.legacy.common.application.weapon.WeaponLuaAnimationStateMachineRuntime
+import com.tacz.legacy.common.application.weapon.WeaponLuaScriptRuntime
 import com.tacz.legacy.common.application.weapon.WeaponTickContext
 import com.tacz.legacy.common.application.weapon.WeaponRuntime
 import com.tacz.legacy.client.input.WeaponAimInputStateRegistry
 import com.tacz.legacy.common.infrastructure.mc.network.LegacyNetworkHandler
 import com.tacz.legacy.common.infrastructure.mc.network.PacketWeaponInput
+import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyGunItem
 import com.tacz.legacy.common.domain.weapon.WeaponInput
 import com.tacz.legacy.common.domain.event.GunFireEvent
 import com.tacz.legacy.common.domain.event.GunShootEvent
 import net.minecraft.entity.player.EntityPlayer
 import net.minecraft.entity.player.EntityPlayerMP
+import net.minecraft.item.ItemStack
 import net.minecraftforge.event.entity.player.AttackEntityEvent
 import net.minecraftforge.event.entity.player.PlayerInteractEvent
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
@@ -61,23 +66,38 @@ public class WeaponPlayerTickEventHandler(
         val gunId = currentGunId(player)
         val behaviorContext = resolveBehaviorContext(gunId, player, sessionId)
 
+        val tickContext = WeaponTickContext(
+            sessionId = sessionId,
+            currentGunId = gunId,
+            muzzlePosition = resolveMuzzlePosition(player),
+            shotDirection = run {
+                val look = player.lookVec
+                Vec3d(look.x, look.y, look.z)
+            },
+            initialAmmoInMagazine = behaviorContext.initialAmmoInMagazine,
+            initialAmmoReserve = behaviorContext.initialAmmoReserve,
+            behaviorConfig = behaviorContext.config
+        )
+
         val tickResult = context.withPlayer(player) {
-            val look = player.lookVec
-            val muzzlePosition = resolveMuzzlePosition(player)
-            orchestrator.onTick(
-                WeaponTickContext(
-                    sessionId = sessionId,
-                    currentGunId = gunId,
-                    muzzlePosition = muzzlePosition,
-                    shotDirection = Vec3d(look.x, look.y, look.z),
-                    behaviorConfig = behaviorContext.config
-                )
-            )
+            orchestrator.onTick(tickContext)
         }
 
         if (tickResult?.step?.shotFired == true) {
             MinecraftForge.EVENT_BUS.post(GunFireEvent(shooter = player, gunId = gunId))
         }
+
+        syncHeldGunStackFromBehaviorResult(player, gunId, tickResult)
+        enforceCreativeInfiniteAmmoIfNeeded(player, sessionId, gunId)
+
+        val animationRuntimePath = resolveAnimationRuntimePath(
+            worldIsRemote = player.world.isRemote,
+            sessionId = sessionId,
+            gunId = gunId,
+            displayDefinition = behaviorContext.displayDefinition,
+            gunScriptParams = behaviorContext.gunScriptParams,
+            behaviorResult = tickResult
+        )
 
         updateAnimationRuntime(
             worldIsRemote = player.world.isRemote,
@@ -87,7 +107,9 @@ public class WeaponPlayerTickEventHandler(
             clipDurationOverridesMillis = behaviorContext.animationClipDurationsMillis,
             reloadTicks = behaviorContext.reloadTicks,
             preferBoltCycleAfterFire = behaviorContext.preferBoltCycleAfterFire,
-            shellEjectPlan = behaviorContext.shellEjectPlan
+            shellEjectPlan = behaviorContext.shellEjectPlan,
+            preferredClip = animationRuntimePath.preferredClip,
+            clipSource = animationRuntimePath.clipSource
         )
 
         syncAuthoritativeSessionIfNeeded(player, sessionId)
@@ -100,6 +122,7 @@ public class WeaponPlayerTickEventHandler(
         val sessionId = sessionId(player.uniqueID.toString(), isRemote)
         orchestrator.onSessionEnd(sessionId)
         WeaponAnimationRuntimeRegistry.removeSession(sessionId)
+        WeaponLuaAnimationStateMachineRuntime.clearSession(sessionId)
 
         if (!isRemote && player is EntityPlayerMP) {
             LegacyNetworkHandler.sendWeaponSessionClearToClient(player, sessionId)
@@ -161,16 +184,19 @@ public class WeaponPlayerTickEventHandler(
         val behaviorContext = resolveBehaviorContext(gunId, player, sessionId)
         val look = player.lookVec
         val muzzlePosition = resolveMuzzlePosition(player)
+        val inputContext = WeaponTickContext(
+            sessionId = sessionId,
+            currentGunId = gunId,
+            muzzlePosition = muzzlePosition,
+            shotDirection = Vec3d(look.x, look.y, look.z),
+            initialAmmoInMagazine = behaviorContext.initialAmmoInMagazine,
+            initialAmmoReserve = behaviorContext.initialAmmoReserve,
+            behaviorConfig = behaviorContext.config
+        )
 
         val result = context.withPlayer(player) {
             orchestrator.onInput(
-                context = WeaponTickContext(
-                    sessionId = sessionId,
-                    currentGunId = gunId,
-                    muzzlePosition = muzzlePosition,
-                    shotDirection = Vec3d(look.x, look.y, look.z),
-                    behaviorConfig = behaviorContext.config
-                ),
+                context = inputContext,
                 input = input
             )
         }
@@ -182,6 +208,18 @@ public class WeaponPlayerTickEventHandler(
             MinecraftForge.EVENT_BUS.post(GunFireEvent(shooter = player, gunId = gunId))
         }
 
+        syncHeldGunStackFromBehaviorResult(player, gunId, result)
+        enforceCreativeInfiniteAmmoIfNeeded(player, sessionId, gunId)
+
+        val animationRuntimePath = resolveAnimationRuntimePath(
+            worldIsRemote = player.world.isRemote,
+            sessionId = sessionId,
+            gunId = gunId,
+            displayDefinition = behaviorContext.displayDefinition,
+            gunScriptParams = behaviorContext.gunScriptParams,
+            behaviorResult = result
+        )
+
         updateAnimationRuntime(
             worldIsRemote = player.world.isRemote,
             sessionId = sessionId,
@@ -190,7 +228,9 @@ public class WeaponPlayerTickEventHandler(
             clipDurationOverridesMillis = behaviorContext.animationClipDurationsMillis,
             reloadTicks = behaviorContext.reloadTicks,
             preferBoltCycleAfterFire = behaviorContext.preferBoltCycleAfterFire,
-            shellEjectPlan = behaviorContext.shellEjectPlan
+            shellEjectPlan = behaviorContext.shellEjectPlan,
+            preferredClip = animationRuntimePath.preferredClip,
+            clipSource = animationRuntimePath.clipSource
         )
         return result
     }
@@ -204,27 +244,70 @@ public class WeaponPlayerTickEventHandler(
             .let { config ->
                 ResolvedBehaviorContext(
                     config = config,
+                    initialAmmoInMagazine = null,
+                    initialAmmoReserve = null,
                     reloadTicks = null,
                     animationClipDurationsMillis = emptyMap(),
                     preferBoltCycleAfterFire = false,
-                    shellEjectPlan = WeaponAnimationShellEjectPlan()
+                    shellEjectPlan = WeaponAnimationShellEjectPlan(),
+                    displayDefinition = null,
+                    gunScriptParams = emptyMap()
                 )
             }
 
         val fallback = WeaponBehaviorConfig()
         val weaponDefinition = WeaponRuntime.registry().snapshot().findDefinition(normalizedGunId)
         val displayDefinition = GunDisplayRuntime.registry().snapshot().findDefinition(normalizedGunId)
+        val heldGunStack = resolveHeldGunStack(player, normalizedGunId)
+        val attachmentSnapshot = heldGunStack?.let { WeaponItemStackRuntimeData.readAttachmentSnapshot(it) }
+            ?: WeaponAttachmentSnapshot()
+        val attachmentModifiers = WeaponAttachmentModifierResolver.resolve(attachmentSnapshot)
         val gunScriptParams = weaponDefinition?.scriptParams.orEmpty()
+
+        val initialAmmoInMagazine = heldGunStack?.let {
+            WeaponItemStackRuntimeData.readAmmoInMagazine(
+                stack = it,
+                defaultValue = weaponDefinition?.spec?.magazineSize ?: DEFAULT_MAGAZINE_SIZE
+            )
+        }
+        val initialAmmoReserve = heldGunStack?.let {
+            WeaponItemStackRuntimeData.readAmmoReserve(it, 0)
+        }
+
+        val scriptHookAdjustments = WeaponLuaScriptEngine.evaluate(
+            gunId = normalizedGunId,
+            displayDefinition = displayDefinition,
+            scriptParams = gunScriptParams,
+            ammoInMagazine = initialAmmoInMagazine ?: (weaponDefinition?.spec?.magazineSize ?: DEFAULT_MAGAZINE_SIZE),
+            ammoReserve = initialAmmoReserve ?: 0
+        )?.ballisticAdjustments
+
+        val luaAdjustments = WeaponLuaScriptRuntime.combineBallisticAdjustments(
+            base = WeaponLuaScriptRuntime.resolveBallisticAdjustments(gunScriptParams),
+            overlay = scriptHookAdjustments
+        )
+
         val preferBoltCycleAfterFire = shouldPreferBoltCycleAfterFire(
             displayDefinition = displayDefinition,
             gunScriptParams = gunScriptParams
         )
+
+        val adjustedProfile = weaponDefinition?.ballistics?.inaccuracy?.let { profile ->
+            profile.copy(
+                stand = (profile.stand + attachmentModifiers.standInaccuracyAdd).coerceAtLeast(0f),
+                move = (profile.move + attachmentModifiers.moveInaccuracyAdd).coerceAtLeast(0f),
+                sneak = (profile.sneak + attachmentModifiers.sneakInaccuracyAdd).coerceAtLeast(0f),
+                lie = (profile.lie + attachmentModifiers.lieInaccuracyAdd).coerceAtLeast(0f),
+                aim = (profile.aim + attachmentModifiers.aimInaccuracyAdd).coerceAtLeast(0f)
+            )
+        }
+
         val inaccuracyDegrees = resolveBulletInaccuracyDegrees(
             player = player,
             sessionId = sessionId,
-            profile = weaponDefinition?.ballistics?.inaccuracy,
+            profile = adjustedProfile,
             fallback = fallback.bulletInaccuracyDegrees
-        )
+        ).times(luaAdjustments.inaccuracyScale).coerceAtLeast(0f)
 
         return ResolvedBehaviorContext(
             preferBoltCycleAfterFire = preferBoltCycleAfterFire,
@@ -236,20 +319,28 @@ public class WeaponPlayerTickEventHandler(
                 reloadEmptySoundId = displayDefinition?.reloadEmptySoundId ?: fallback.reloadEmptySoundId,
                 reloadTacticalSoundId = displayDefinition?.reloadTacticalSoundId ?: fallback.reloadTacticalSoundId,
                 maxDistance = weaponDefinition?.spec?.maxDistance ?: fallback.maxDistance,
-                bulletSpeed = weaponDefinition?.ballistics?.speed ?: fallback.bulletSpeed,
+                bulletSpeed = ((weaponDefinition?.ballistics?.speed ?: fallback.bulletSpeed) * luaAdjustments.speedScale)
+                    .coerceAtLeast(0.001f),
                 bulletGravity = weaponDefinition?.ballistics?.gravity ?: fallback.bulletGravity,
                 bulletFriction = weaponDefinition?.ballistics?.friction ?: fallback.bulletFriction,
-                bulletDamage = weaponDefinition?.ballistics?.damage ?: fallback.bulletDamage,
+                bulletDamage = ((weaponDefinition?.ballistics?.damage ?: fallback.bulletDamage) + attachmentModifiers.damageAdd)
+                    .times(luaAdjustments.damageScale)
+                    .coerceAtLeast(0f),
                 bulletLifeTicks = weaponDefinition?.ballistics?.lifetimeTicks ?: fallback.bulletLifeTicks,
                 bulletPierce = weaponDefinition?.ballistics?.pierce ?: fallback.bulletPierce,
                 bulletPelletCount = weaponDefinition?.ballistics?.pelletCount ?: fallback.bulletPelletCount,
                 bulletInaccuracyDegrees = inaccuracyDegrees,
-                bulletArmorIgnore = weaponDefinition?.ballistics?.armorIgnore ?: fallback.bulletArmorIgnore,
-                bulletHeadShotMultiplier = weaponDefinition?.ballistics?.headShotMultiplier ?: fallback.bulletHeadShotMultiplier,
+                bulletArmorIgnore = ((weaponDefinition?.ballistics?.armorIgnore ?: fallback.bulletArmorIgnore) + attachmentModifiers.armorIgnoreAdd)
+                    .coerceIn(0f, 1f),
+                bulletHeadShotMultiplier = ((weaponDefinition?.ballistics?.headShotMultiplier
+                    ?: fallback.bulletHeadShotMultiplier) + attachmentModifiers.headShotMultiplierAdd)
+                    .coerceAtLeast(0f),
                 bulletDamageAdjust = weaponDefinition?.ballistics?.damageAdjust?.map {
                     DistanceDamagePairDto(distance = it.distance, damage = it.damage)
                 } ?: fallback.bulletDamageAdjust,
-                bulletKnockback = weaponDefinition?.ballistics?.knockback ?: fallback.bulletKnockback,
+                bulletKnockback = ((weaponDefinition?.ballistics?.knockback ?: fallback.bulletKnockback) + attachmentModifiers.knockbackAdd)
+                    .times(luaAdjustments.knockbackScale)
+                    .coerceAtLeast(0f),
                 bulletIgniteEntity = weaponDefinition?.ballistics?.igniteEntity ?: fallback.bulletIgniteEntity,
                 bulletIgniteEntityTime = weaponDefinition?.ballistics?.igniteEntityTime ?: fallback.bulletIgniteEntityTime,
                 bulletIgniteBlock = weaponDefinition?.ballistics?.igniteBlock ?: fallback.bulletIgniteBlock,
@@ -265,12 +356,16 @@ public class WeaponPlayerTickEventHandler(
                 bulletGunId = weaponDefinition?.gunId,
                 fireSoundPitchJitter = FIRE_SOUND_PITCH_JITTER
             ),
+            initialAmmoInMagazine = initialAmmoInMagazine,
+            initialAmmoReserve = initialAmmoReserve,
             reloadTicks = weaponDefinition?.spec?.reloadTicks,
             animationClipDurationsMillis = resolveAnimationClipDurationOverrides(displayDefinition),
             shellEjectPlan = resolveShellEjectPlan(
                 displayDefinition = displayDefinition,
                 gunScriptParams = gunScriptParams
-            )
+            ),
+            displayDefinition = displayDefinition,
+            gunScriptParams = gunScriptParams
         )
     }
 
@@ -501,7 +596,9 @@ public class WeaponPlayerTickEventHandler(
         clipDurationOverridesMillis: Map<WeaponAnimationClipType, Long>,
         reloadTicks: Int?,
         preferBoltCycleAfterFire: Boolean,
-        shellEjectPlan: WeaponAnimationShellEjectPlan
+        shellEjectPlan: WeaponAnimationShellEjectPlan,
+        preferredClip: WeaponAnimationClipType?,
+        clipSource: WeaponAnimationClipSource
     ) {
         if (!worldIsRemote) {
             return
@@ -521,8 +618,113 @@ public class WeaponPlayerTickEventHandler(
             clipDurationOverridesMillis = clipDurationOverridesMillis,
             reloadTicks = reloadTicks,
             preferBoltCycleAfterFire = preferBoltCycleAfterFire,
-            shellEjectPlan = shellEjectPlan
+            shellEjectPlan = shellEjectPlan,
+            preferredClip = preferredClip,
+            clipSource = clipSource
         )
+    }
+
+    internal fun resolveAnimationRuntimePath(
+        worldIsRemote: Boolean,
+        sessionId: String,
+        gunId: String?,
+        displayDefinition: GunDisplayDefinition?,
+        gunScriptParams: Map<String, Float>,
+        behaviorResult: WeaponBehaviorResult?,
+        luaFeatureEnabled: Boolean = ENABLE_LUA_ANIMATION_STATE_MACHINE
+    ): ResolvedAnimationRuntimePath {
+        if (!worldIsRemote) {
+            return ResolvedAnimationRuntimePath(
+                clipSource = WeaponAnimationClipSource.SIGNAL,
+                preferredClip = null
+            )
+        }
+
+        if (!luaFeatureEnabled) {
+            WeaponLuaAnimationStateMachineRuntime.clearSession(sessionId)
+            return ResolvedAnimationRuntimePath(
+                clipSource = WeaponAnimationClipSource.SIGNAL,
+                preferredClip = null
+            )
+        }
+
+        val normalizedGunId = gunId?.trim()?.lowercase()?.ifBlank { null }
+        if (normalizedGunId == null || displayDefinition == null || behaviorResult == null) {
+            WeaponLuaAnimationStateMachineRuntime.clearSession(sessionId)
+            return ResolvedAnimationRuntimePath(
+                clipSource = WeaponAnimationClipSource.SIGNAL_FALLBACK,
+                preferredClip = null
+            )
+        }
+
+        val tickResult = WeaponLuaAnimationStateMachineRuntime.tick(
+            sessionId = sessionId,
+            gunId = normalizedGunId,
+            displayDefinition = displayDefinition,
+            gunScriptParams = gunScriptParams,
+            behaviorResult = behaviorResult
+        )
+
+        if (tickResult == null || tickResult.failed) {
+            return ResolvedAnimationRuntimePath(
+                clipSource = WeaponAnimationClipSource.SIGNAL_FALLBACK,
+                preferredClip = null
+            )
+        }
+
+        return ResolvedAnimationRuntimePath(
+            clipSource = WeaponAnimationClipSource.LUA_STATE_MACHINE,
+            preferredClip = resolveLuaPreferredClip(tickResult.activeStates)
+        )
+    }
+
+    internal fun resolveAnimationClipSource(
+        worldIsRemote: Boolean,
+        sessionId: String,
+        gunId: String?,
+        displayDefinition: GunDisplayDefinition?,
+        gunScriptParams: Map<String, Float>,
+        behaviorResult: WeaponBehaviorResult?,
+        luaFeatureEnabled: Boolean = ENABLE_LUA_ANIMATION_STATE_MACHINE
+    ): WeaponAnimationClipSource {
+        return resolveAnimationRuntimePath(
+            worldIsRemote = worldIsRemote,
+            sessionId = sessionId,
+            gunId = gunId,
+            displayDefinition = displayDefinition,
+            gunScriptParams = gunScriptParams,
+            behaviorResult = behaviorResult,
+            luaFeatureEnabled = luaFeatureEnabled
+        ).clipSource
+    }
+
+    internal fun resolveLuaPreferredClip(activeStates: Set<String>): WeaponAnimationClipType? {
+        if (activeStates.isEmpty()) {
+            return null
+        }
+
+        var matched: WeaponAnimationClipType? = null
+        var matchedPriority = Int.MAX_VALUE
+
+        activeStates.forEach { raw ->
+            val token = normalizeLuaStateToken(raw)
+            if (token.isEmpty()) {
+                return@forEach
+            }
+
+            LUA_STATE_TOKEN_PRIORITIES.forEachIndexed { priority, (predicate, clip) ->
+                if (!predicate(token)) {
+                    return@forEachIndexed
+                }
+                if (priority < matchedPriority) {
+                    matchedPriority = priority
+                    matched = clip
+                }
+                return@forEach
+            }
+        }
+
+        return matched
     }
 
     private fun currentGunId(player: EntityPlayer): String? =
@@ -594,6 +796,86 @@ public class WeaponPlayerTickEventHandler(
         lastSyncedTickBySessionId[sessionId] = currentTick
     }
 
+    private fun syncHeldGunStackFromBehaviorResult(
+        player: EntityPlayer,
+        gunId: String?,
+        behaviorResult: WeaponBehaviorResult?
+    ) {
+        val snapshot = behaviorResult?.step?.snapshot ?: return
+        val heldGunStack = resolveHeldGunStack(player, gunId) ?: return
+        WeaponItemStackRuntimeData.writeAmmoState(
+            stack = heldGunStack,
+            ammoInMagazine = snapshot.ammoInMagazine,
+            ammoReserve = snapshot.ammoReserve,
+            hasBulletInBarrel = snapshot.ammoInMagazine > 0
+        )
+    }
+
+    private fun resolveHeldGunStack(player: EntityPlayer, gunId: String?): ItemStack? {
+        val normalizedGunId = gunId?.trim()?.lowercase()?.ifBlank { null } ?: return null
+        val stack = player.heldItemMainhand
+        if (stack.isEmpty || stack.item !is LegacyGunItem) {
+            return null
+        }
+
+        val stackGunId = stack.item.registryName
+            ?.toString()
+            ?.substringAfter(':')
+            ?.trim()
+            ?.lowercase()
+            ?.ifBlank { null }
+
+        if (stackGunId != normalizedGunId) {
+            return null
+        }
+
+        return stack
+    }
+
+    private fun enforceCreativeInfiniteAmmoIfNeeded(
+        player: EntityPlayer,
+        sessionId: String,
+        gunId: String?
+    ) {
+        if (!ENABLE_CREATIVE_INFINITE_AMMO) {
+            return
+        }
+        if (player.world.isRemote || !player.capabilities.isCreativeMode) {
+            return
+        }
+
+        val normalizedGunId = gunId?.trim()?.lowercase()?.ifBlank { null } ?: return
+        val heldGunStack = resolveHeldGunStack(player, normalizedGunId) ?: return
+        val sessionService = WeaponRuntimeMcBridge.sessionServiceOrNull() ?: return
+        val snapshot = sessionService.snapshot(sessionId) ?: return
+        val stackReserve = WeaponItemStackRuntimeData.readAmmoReserve(heldGunStack, snapshot.ammoReserve)
+
+        if (snapshot.ammoReserve >= CREATIVE_INFINITE_RESERVE && stackReserve >= CREATIVE_INFINITE_RESERVE) {
+            return
+        }
+
+        val patchedSnapshot = snapshot.copy(
+            ammoReserve = CREATIVE_INFINITE_RESERVE
+        )
+
+        val upserted = sessionService.upsertAuthoritativeSnapshot(
+            sessionId = sessionId,
+            gunId = normalizedGunId,
+            snapshot = patchedSnapshot,
+            allowFallbackDefinition = true
+        )
+        if (upserted == null) {
+            return
+        }
+
+        WeaponItemStackRuntimeData.writeAmmoState(
+            stack = heldGunStack,
+            ammoInMagazine = patchedSnapshot.ammoInMagazine,
+            ammoReserve = CREATIVE_INFINITE_RESERVE,
+            hasBulletInBarrel = patchedSnapshot.ammoInMagazine > 0
+        )
+    }
+
     internal fun buildSyncSignature(
         debugSnapshot: com.tacz.legacy.common.application.weapon.WeaponSessionDebugSnapshot
     ): Int {
@@ -632,16 +914,68 @@ public class WeaponPlayerTickEventHandler(
 
     private data class ResolvedBehaviorContext(
         val config: WeaponBehaviorConfig,
+        val initialAmmoInMagazine: Int?,
+        val initialAmmoReserve: Int?,
         val reloadTicks: Int?,
         val animationClipDurationsMillis: Map<WeaponAnimationClipType, Long>,
         val preferBoltCycleAfterFire: Boolean,
-        val shellEjectPlan: WeaponAnimationShellEjectPlan
+        val shellEjectPlan: WeaponAnimationShellEjectPlan,
+        val displayDefinition: GunDisplayDefinition?,
+        val gunScriptParams: Map<String, Float>
+    )
+
+    internal data class ResolvedAnimationRuntimePath(
+        val clipSource: WeaponAnimationClipSource,
+        val preferredClip: WeaponAnimationClipType?
     )
 
     private companion object {
         private const val SESSION_SYNC_RESEND_INTERVAL_TICKS: Long = 20L
         private const val FIRE_SOUND_PITCH_JITTER: Float = 0.08f
         private const val MOVING_SPEED_EPSILON_SQ: Double = 0.0025
+        private const val DEFAULT_MAGAZINE_SIZE: Int = 30
+        private const val ENABLE_CREATIVE_INFINITE_AMMO: Boolean = true
+        private const val CREATIVE_INFINITE_RESERVE: Int = 9_999
+        private const val ENABLE_LUA_ANIMATION_STATE_MACHINE: Boolean = false
+
+        private fun normalizeLuaStateToken(raw: String): String =
+            raw.trim()
+                .lowercase()
+                .map { ch -> if (ch.isLetterOrDigit()) ch else '_' }
+                .joinToString(separator = "")
+                .replace("__+".toRegex(), "_")
+                .trim('_')
+
+        private fun containsToken(token: String, keyword: String): Boolean {
+            if (token == keyword) {
+                return true
+            }
+            return token.startsWith("${keyword}_") || token.endsWith("_${keyword}") || token.contains("_${keyword}_")
+        }
+
+        private fun containsAnyToken(token: String, keywords: Collection<String>): Boolean =
+            keywords.any { keyword -> containsToken(token, keyword) }
+
+        private val LUA_STATE_TOKEN_PRIORITIES: List<Pair<(String) -> Boolean, WeaponAnimationClipType>> = listOf(
+            Pair({ token -> containsAnyToken(token, setOf("reload", "reload_empty", "reload_tactical", "reload_intro", "reload_loop", "reload_end")) }, WeaponAnimationClipType.RELOAD),
+            Pair({ token -> containsAnyToken(token, setOf("dry_fire", "empty_click", "no_ammo")) || (containsToken(token, "dry") && containsToken(token, "fire")) }, WeaponAnimationClipType.DRY_FIRE),
+            Pair({ token ->
+                (containsAnyToken(token, setOf("shoot", "shot", "recoil")) || containsToken(token, "fire")) &&
+                    !containsAnyToken(token, setOf("fire_select", "fire_mode", "firemode"))
+            }, WeaponAnimationClipType.FIRE),
+            Pair({ token -> containsToken(token, "inspect") }, WeaponAnimationClipType.INSPECT),
+            Pair({ token -> containsToken(token, "bolt") || containsToken(token, "charge") }, WeaponAnimationClipType.BOLT),
+            Pair({ token -> token == "main_track_states_start" || token.endsWith("_main_track_states_start") }, WeaponAnimationClipType.DRAW),
+            Pair({ token -> containsToken(token, "draw") || containsToken(token, "equip") || containsToken(token, "deploy") }, WeaponAnimationClipType.DRAW),
+            Pair({ token -> containsToken(token, "put_away") || containsToken(token, "putaway") || containsToken(token, "holster") || containsToken(token, "withdraw") || token == "final" }, WeaponAnimationClipType.PUT_AWAY),
+            Pair({ token -> containsToken(token, "run") || containsToken(token, "sprint") }, WeaponAnimationClipType.RUN),
+            Pair({ token -> containsToken(token, "walk") || containsToken(token, "move") }, WeaponAnimationClipType.WALK),
+            Pair({ token ->
+                (containsToken(token, "aim") || containsToken(token, "aiming") || containsToken(token, "ads") || containsToken(token, "sight")) &&
+                    !containsAnyToken(token, setOf("walk", "run", "sprint"))
+            }, WeaponAnimationClipType.AIM),
+            Pair({ token -> containsToken(token, "idle") || containsToken(token, "static") }, WeaponAnimationClipType.IDLE)
+        )
     }
 
 }

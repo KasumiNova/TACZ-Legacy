@@ -1,13 +1,9 @@
 package com.tacz.legacy.common.infrastructure.mc.registry.item
 
 import com.tacz.legacy.common.infrastructure.mc.registry.LegacyCreativeTabs
-import net.minecraft.client.util.ITooltipFlag
 import net.minecraft.creativetab.CreativeTabs
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.item.ItemStack
-import net.minecraft.world.World
-import net.minecraftforge.fml.relauncher.Side
-import net.minecraftforge.fml.relauncher.SideOnly
 
 public class LegacyGunItem(
     registryPath: String,
@@ -28,7 +24,11 @@ public class LegacyGunItem(
 
     public fun isVisibleInCreativeTab(targetTab: CreativeTabs): Boolean = isInCreativeTab(targetTab)
 
-    override fun shouldCauseReequipAnimation(oldStack: ItemStack, newStack: ItemStack, slotChanged: Boolean): Boolean {
+    override fun shouldCauseReequipAnimation(oldStack: ItemStack, newStack: ItemStack, slotChanged: Boolean): Boolean {        // 枪→枪切换全部由自定义 draw/put_away 动画系统处理，
+        // 不触发原版重装备动画——避免快捷栏多枪时出现模型闪烁。
+        if (newStack.item is LegacyGunItem && oldStack.item is LegacyGunItem) {
+            return false
+        }
         if (slotChanged) {
             return true
         }
@@ -46,18 +46,6 @@ public class LegacyGunItem(
     override fun onEntitySwing(entityLiving: EntityLivingBase, stack: ItemStack): Boolean {
         // 拦截原版 swingArm，避免枪械射击触发手臂挥砍动画。
         return true
-    }
-
-    @SideOnly(Side.CLIENT)
-    override fun addInformation(
-        stack: ItemStack,
-        worldIn: World?,
-        tooltip: MutableList<String>,
-        flagIn: ITooltipFlag
-    ) {
-        super.addInformation(stack, worldIn, tooltip, flagIn)
-        tooltip += "§7左键：开火"
-        tooltip += "§7潜行 + 右键：换弹"
     }
 
 }

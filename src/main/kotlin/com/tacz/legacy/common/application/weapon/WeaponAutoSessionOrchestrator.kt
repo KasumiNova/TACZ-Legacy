@@ -8,6 +8,8 @@ public data class WeaponTickContext(
     val currentGunId: String?,
     val muzzlePosition: Vec3d,
     val shotDirection: Vec3d,
+    val initialAmmoInMagazine: Int? = null,
+    val initialAmmoReserve: Int? = null,
     val behaviorConfig: WeaponBehaviorConfig? = null
 )
 
@@ -26,7 +28,7 @@ public class WeaponAutoSessionOrchestrator(
             return null
         }
 
-        if (!ensureSession(context.sessionId, normalizedGunId)) {
+        if (!ensureSession(context, normalizedGunId)) {
             return null
         }
 
@@ -46,7 +48,7 @@ public class WeaponAutoSessionOrchestrator(
             return null
         }
 
-        if (!ensureSession(context.sessionId, normalizedGunId)) {
+        if (!ensureSession(context, normalizedGunId)) {
             return null
         }
 
@@ -71,7 +73,8 @@ public class WeaponAutoSessionOrchestrator(
         trackedGunBySessionId.clear()
     }
 
-    private fun ensureSession(sessionId: String, gunId: String): Boolean {
+    private fun ensureSession(context: WeaponTickContext, gunId: String): Boolean {
+        val sessionId = context.sessionId
         val trackedGunId = trackedGunBySessionId[sessionId]
         val needsOpen = trackedGunId != gunId || !sessionService.hasSession(sessionId)
         if (!needsOpen) {
@@ -82,6 +85,8 @@ public class WeaponAutoSessionOrchestrator(
         val handle = sessionService.openSession(
             sessionId = sessionId,
             gunId = gunId,
+            ammoReserve = context.initialAmmoReserve ?: 0,
+            ammoInMagazine = context.initialAmmoInMagazine,
             allowFallbackDefinition = true
         ) ?: run {
             trackedGunBySessionId.remove(sessionId)

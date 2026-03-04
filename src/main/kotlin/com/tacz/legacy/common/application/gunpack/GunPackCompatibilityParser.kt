@@ -198,6 +198,8 @@ public class GunPackCompatibilityParser {
         val melee = readMelee(root, report)
         val fireModeAdjust = readFireModeAdjust(root, report)
         val scriptParams = readScriptParams(root, report)
+        val allowAttachmentTypes = readAllowAttachmentTypes(root, report)
+        val allowAttachments = readAllowAttachments(root, report)
         val bullet = readBullet(root, report)
 
         val normalized = normalize(
@@ -228,7 +230,9 @@ public class GunPackCompatibilityParser {
                 moveSpeed = moveSpeed,
                 melee = melee,
                 fireModeAdjust = fireModeAdjust,
-                scriptParams = scriptParams
+                scriptParams = scriptParams,
+                allowAttachmentTypes = allowAttachmentTypes,
+                allowAttachments = allowAttachments
             ),
             report
         )
@@ -1282,6 +1286,113 @@ public class GunPackCompatibilityParser {
         return out.toMap()
     }
 
+    private fun readAllowAttachmentTypes(root: JsonObject, report: GunPackCompatibilityReport): Set<String> {
+        val element = root.get("allow_attachment_types")
+            ?: root.get("allowAttachmentTypes")
+            ?: return emptySet()
+
+        if (!element.isJsonArray) {
+            report.addWarning(
+                code = IssueCode.INVALID_FIELD_TYPE,
+                field = "allow_attachment_types",
+                message = "Field 'allow_attachment_types' should be an array, ignored."
+            )
+            return emptySet()
+        }
+
+        return element.asJsonArray
+            .mapIndexedNotNull { index, jsonElement ->
+                val raw = jsonElement
+                    .takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                    ?.asString
+                if (raw == null) {
+                    report.addWarning(
+                        code = IssueCode.INVALID_FIELD_TYPE,
+                        field = "allow_attachment_types[$index]",
+                        message = "Entry of 'allow_attachment_types' should be string, ignored."
+                    )
+                    return@mapIndexedNotNull null
+                }
+
+                val normalized = normalizeAttachmentTypeToken(raw)
+                if (normalized == null) {
+                    report.addWarning(
+                        code = IssueCode.UNSUPPORTED_ENUM_VALUE,
+                        field = "allow_attachment_types[$index]",
+                        message = "Unsupported attachment type '$raw', ignored."
+                    )
+                }
+                normalized
+            }
+            .toSet()
+    }
+
+    private fun readAllowAttachments(root: JsonObject, report: GunPackCompatibilityReport): Set<String> {
+        val element = root.get("allow_attachments")
+            ?: root.get("allowAttachments")
+            ?: return emptySet()
+
+        if (!element.isJsonArray) {
+            report.addWarning(
+                code = IssueCode.INVALID_FIELD_TYPE,
+                field = "allow_attachments",
+                message = "Field 'allow_attachments' should be an array, ignored."
+            )
+            return emptySet()
+        }
+
+        return element.asJsonArray
+            .mapIndexedNotNull { index, jsonElement ->
+                val raw = jsonElement
+                    .takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                    ?.asString
+                if (raw == null) {
+                    report.addWarning(
+                        code = IssueCode.INVALID_FIELD_TYPE,
+                        field = "allow_attachments[$index]",
+                        message = "Entry of 'allow_attachments' should be string, ignored."
+                    )
+                    return@mapIndexedNotNull null
+                }
+
+                val normalized = WeaponAttachmentCompatibilitySnapshot.normalizeAllowEntryOrNull(
+                    raw = raw,
+                    defaultNamespace = DEFAULT_NAMESPACE
+                )
+                if (normalized == null) {
+                    report.addWarning(
+                        code = IssueCode.INVALID_FIELD_VALUE,
+                        field = "allow_attachments[$index]",
+                        message = "Invalid allow attachment entry '$raw', ignored."
+                    )
+                }
+                normalized
+            }
+            .toSet()
+    }
+
+    private fun normalizeAttachmentTypeToken(raw: String): String? {
+        val normalized = raw
+            .trim()
+            .lowercase()
+            .substringAfter(':')
+            .replace('-', '_')
+            .replace(' ', '_')
+            .replace("__+".toRegex(), "_")
+            .trim('_')
+            .ifBlank { return null }
+
+        return when (normalized) {
+            "scope" -> "SCOPE"
+            "muzzle" -> "MUZZLE"
+            "stock" -> "STOCK"
+            "grip" -> "GRIP"
+            "laser" -> "LASER"
+            "extended_mag", "extended_magazine", "ext_mag", "mag", "extendedmag" -> "EXTENDED_MAG"
+            else -> null
+        }
+    }
+
     private fun readFireModes(root: JsonObject, report: GunPackCompatibilityReport): Set<GunFireMode> {
         val found = root.findField(
             primary = "fire_mode",
@@ -1559,6 +1670,10 @@ public class GunPackCompatibilityParser {
         const val INVALID_FIELD_VALUE: String = "INVALID_FIELD_VALUE"
         const val UNSUPPORTED_ENUM_VALUE: String = "UNSUPPORTED_ENUM_VALUE"
         const val FIELD_ALIAS_USED: String = "FIELD_ALIAS_USED"
+    }
+
+    private companion object {
+        private const val DEFAULT_NAMESPACE: String = "tacz"
     }
 
 }

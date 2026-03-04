@@ -2,9 +2,13 @@ package com.tacz.legacy.common.infrastructure.mc.weapon
 
 import com.tacz.legacy.common.application.gunpack.GunDisplayDefinition
 import com.tacz.legacy.common.application.weapon.WeaponAutoSessionOrchestrator
+import com.tacz.legacy.common.application.weapon.WeaponAnimationSignal
+import com.tacz.legacy.common.application.weapon.WeaponBehaviorResult
+import com.tacz.legacy.common.application.weapon.WeaponLuaAnimationStateMachineRuntime
 import com.tacz.legacy.common.application.weapon.WeaponSessionDebugSnapshot
 import com.tacz.legacy.common.application.weapon.WeaponSessionService
 import com.tacz.legacy.common.domain.weapon.WeaponSnapshot
+import com.tacz.legacy.common.domain.weapon.WeaponStepResult
 import com.tacz.legacy.common.domain.weapon.WeaponState
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
@@ -185,11 +189,236 @@ public class WeaponPlayerTickEventHandlerTest {
         )
     }
 
+    @Test
+    public fun `animation clip source should stay signal when lua feature is disabled`() {
+        WeaponLuaAnimationStateMachineRuntime.clear()
+        try {
+            val source = handler.resolveAnimationClipSource(
+                worldIsRemote = true,
+                sessionId = "player:test:client",
+                gunId = "ak47",
+                displayDefinition = displayDefinition(
+                    stateMachinePath = "assets/tacz/scripts/ak47_state_machine.lua",
+                    stateMachineScriptContent = "states={ idle={} }; function initialize(ctx) return 'idle' end"
+                ),
+                gunScriptParams = emptyMap(),
+                behaviorResult = behaviorResult(),
+                luaFeatureEnabled = false
+            )
+
+            assertEquals(WeaponAnimationClipSource.SIGNAL, source)
+        } finally {
+            WeaponLuaAnimationStateMachineRuntime.clear()
+        }
+    }
+
+    @Test
+    public fun `animation clip source should fallback when lua is enabled but script is unavailable`() {
+        WeaponLuaAnimationStateMachineRuntime.clear()
+        try {
+            val source = handler.resolveAnimationClipSource(
+                worldIsRemote = true,
+                sessionId = "player:test:client",
+                gunId = "ak47",
+                displayDefinition = displayDefinition(
+                    stateMachinePath = "assets/tacz/scripts/ak47_state_machine.lua",
+                    stateMachineScriptContent = null
+                ),
+                gunScriptParams = emptyMap(),
+                behaviorResult = behaviorResult(),
+                luaFeatureEnabled = true
+            )
+
+            assertEquals(WeaponAnimationClipSource.SIGNAL_FALLBACK, source)
+        } finally {
+            WeaponLuaAnimationStateMachineRuntime.clear()
+        }
+    }
+
+    @Test
+    public fun `animation clip source should switch to lua when lua state machine tick succeeds`() {
+        WeaponLuaAnimationStateMachineRuntime.clear()
+        try {
+            val source = handler.resolveAnimationClipSource(
+                worldIsRemote = true,
+                sessionId = "player:test:client",
+                gunId = "ak47",
+                displayDefinition = displayDefinition(
+                    stateMachinePath = "assets/tacz/scripts/ak47_state_machine.lua",
+                    stateMachineScriptContent = """
+                        states = {
+                          idle = {
+                            transition = function(ctx)
+                              if ctx.fire then return 'fire' end
+                              return nil
+                            end
+                          },
+                          fire = {
+                            transition = function(ctx)
+                              if not ctx.fire then return 'idle' end
+                              return nil
+                            end
+                          }
+                        }
+                        function initialize(ctx)
+                          return 'idle'
+                        end
+                    """.trimIndent()
+                ),
+                gunScriptParams = mapOf("bolt_feed_time" to 0.15f),
+                behaviorResult = behaviorResult(signals = setOf(WeaponAnimationSignal.FIRE)),
+                luaFeatureEnabled = true
+            )
+
+            assertEquals(WeaponAnimationClipSource.LUA_STATE_MACHINE, source)
+        } finally {
+            WeaponLuaAnimationStateMachineRuntime.clear()
+        }
+    }
+
+    @Test
+    public fun `animation runtime path should expose preferred clip resolved from lua active state`() {
+        WeaponLuaAnimationStateMachineRuntime.clear()
+        try {
+            val path = handler.resolveAnimationRuntimePath(
+                worldIsRemote = true,
+                sessionId = "player:test:client",
+                gunId = "ak47",
+                displayDefinition = displayDefinition(
+                    stateMachinePath = "assets/tacz/scripts/ak47_state_machine.lua",
+                    stateMachineScriptContent = """
+                        states = {
+                          idle = {
+                            transition = function(ctx)
+                              if ctx.fire then return 'aiming_hold' end
+                              return nil
+                            end
+                          },
+                          aiming_hold = {}
+                        }
+                        function initialize(ctx)
+                          return 'idle'
+                        end
+                    """.trimIndent()
+                ),
+                gunScriptParams = emptyMap(),
+                behaviorResult = behaviorResult(signals = setOf(WeaponAnimationSignal.FIRE)),
+                luaFeatureEnabled = true
+            )
+
+            assertEquals(WeaponAnimationClipSource.LUA_STATE_MACHINE, path.clipSource)
+            assertEquals(WeaponAnimationClipType.AIM, path.preferredClip)
+        } finally {
+            WeaponLuaAnimationStateMachineRuntime.clear()
+        }
+    }
+
+        @Test
+        public fun `animation runtime path should stay on lua source when script requires bundled default module`() {
+                WeaponLuaAnimationStateMachineRuntime.clear()
+                try {
+                        val path = handler.resolveAnimationRuntimePath(
+                                worldIsRemote = true,
+                                sessionId = "player:test:client",
+                                gunId = "ak47",
+                                displayDefinition = displayDefinition(
+                                        stateMachinePath = "assets/tacz/scripts/ak47_state_machine.lua",
+                                        stateMachineScriptContent = """
+                                                local default = require("tacz_default_state_machine")
+
+                                                local M = {
+                                                    flow = {
+                                                        idle = {
+                                                            transition = function(this, context, input)
+                                                                if input == 'shoot' and default.main_track_states ~= nil then
+                                                                    return this.flow.fire
+                                                                end
+                                                                return nil
+                                                            end
+                                                        },
+                                                        fire = {}
+                                                    }
+                                                }
+
+                                                function M:states()
+                                                    return { self.flow.idle }
+                                                end
+
+                                                return M
+                                        """.trimIndent()
+                                ),
+                                gunScriptParams = emptyMap(),
+                                behaviorResult = behaviorResult(signals = setOf(WeaponAnimationSignal.FIRE)),
+                                luaFeatureEnabled = true
+                        )
+
+                        assertEquals(WeaponAnimationClipSource.LUA_STATE_MACHINE, path.clipSource)
+                        assertEquals(WeaponAnimationClipType.FIRE, path.preferredClip)
+                } finally {
+                        WeaponLuaAnimationStateMachineRuntime.clear()
+                }
+        }
+
+    @Test
+    public fun `lua preferred clip resolver should pick highest priority semantic clip`() {
+        val resolved = handler.resolveLuaPreferredClip(
+            setOf("idle", "run_loop", "reload_tactical")
+        )
+
+        assertEquals(WeaponAnimationClipType.RELOAD, resolved)
+    }
+
+    @Test
+    public fun `lua preferred clip resolver should return null when no known semantic state exists`() {
+        val resolved = handler.resolveLuaPreferredClip(
+            setOf("foo_state", "bar_mode")
+        )
+
+        assertTrue(resolved == null)
+    }
+
+    @Test
+    public fun `lua preferred clip resolver should map walk aiming state to walk clip`() {
+        val resolved = handler.resolveLuaPreferredClip(
+            setOf("walk_aiming")
+        )
+
+        assertEquals(WeaponAnimationClipType.WALK, resolved)
+    }
+
+    @Test
+    public fun `lua preferred clip resolver should not treat fire select as fire recoil`() {
+        val resolved = handler.resolveLuaPreferredClip(
+            setOf("fire_select")
+        )
+
+        assertTrue(resolved == null)
+    }
+
+    @Test
+    public fun `lua preferred clip resolver should map final state to put away clip`() {
+        val resolved = handler.resolveLuaPreferredClip(
+            setOf("final")
+        )
+
+        assertEquals(WeaponAnimationClipType.PUT_AWAY, resolved)
+    }
+
+    @Test
+    public fun `lua preferred clip resolver should map main track start state to draw clip`() {
+        val resolved = handler.resolveLuaPreferredClip(
+            setOf("main_track_states.start")
+        )
+
+        assertEquals(WeaponAnimationClipType.DRAW, resolved)
+    }
+
     private fun displayDefinition(
         stateMachinePath: String,
         stateMachineParams: Map<String, Float> = emptyMap(),
         animationBoltClipName: String? = null,
-        animationClipNames: List<String>? = null
+        animationClipNames: List<String>? = null,
+        stateMachineScriptContent: String? = "return {}"
     ): GunDisplayDefinition = GunDisplayDefinition(
         sourceId = "sample_pack/data/tacz/data/guns/shotgun/m870_display.json",
         gunId = "m870",
@@ -201,6 +430,7 @@ public class WeaponPlayerTickEventHandlerTest {
         slotTexturePath = null,
         animationPath = null,
         stateMachinePath = stateMachinePath,
+        stateMachineScriptContent = stateMachineScriptContent,
         stateMachineParams = stateMachineParams,
         playerAnimator3rdPath = null,
         thirdPersonAnimation = null,
@@ -217,5 +447,24 @@ public class WeaponPlayerTickEventHandlerTest {
         hudEmptyTexturePath = null,
         showCrosshair = true
     )
+
+    private fun behaviorResult(signals: Set<WeaponAnimationSignal> = emptySet()): WeaponBehaviorResult =
+        WeaponBehaviorResult(
+            step = WeaponStepResult(
+                snapshot = WeaponSnapshot(
+                    state = WeaponState.IDLE,
+                    ammoInMagazine = 30,
+                    ammoReserve = 90,
+                    cooldownTicksRemaining = 0,
+                    reloadTicksRemaining = 0,
+                    totalShotsFired = 0
+                ),
+                shotFired = signals.contains(WeaponAnimationSignal.FIRE),
+                dryFired = signals.contains(WeaponAnimationSignal.DRY_FIRE),
+                reloadStarted = signals.contains(WeaponAnimationSignal.RELOAD_START),
+                reloadCompleted = signals.contains(WeaponAnimationSignal.RELOAD_COMPLETE)
+            ),
+            animationSignals = signals
+        )
 
 }

@@ -27,7 +27,9 @@ public data class GunData(
     val moveSpeed: GunMoveSpeedData = GunMoveSpeedData(),
     val melee: GunMeleeData = GunMeleeData(),
     val fireModeAdjust: Map<String, GunFireModeAdjustData> = emptyMap(),
-    val scriptParams: Map<String, Float> = emptyMap()
+    val scriptParams: Map<String, Float> = emptyMap(),
+    val allowAttachmentTypes: Set<String> = emptySet(),
+    val allowAttachments: Set<String> = emptySet()
 )
 
 public data class GunRecoilData(

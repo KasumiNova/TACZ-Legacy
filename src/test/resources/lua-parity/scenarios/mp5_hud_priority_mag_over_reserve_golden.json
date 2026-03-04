@@ -1,0 +1,20 @@
+{
+  "scenarioId": "mp5_hud_priority_mag_over_reserve",
+  "gunId": "mp5",
+  "scriptId": "assets/tacz/scripts/mp5_state_machine.lua",
+  "script": "local noop = true",
+  "scriptParams": {
+    "lua_hud_low_mag_threshold": 10,
+    "lua_hud_low_reserve_threshold": 20
+  },
+  "ammoInMagazine": 5,
+  "ammoReserve": 10,
+  "expected": {
+    "damageScale": 1.0,
+    "speedScale": 1.0,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 1.0,
+    "hudHint": "LUA: MAG LOW"
+  }
+}

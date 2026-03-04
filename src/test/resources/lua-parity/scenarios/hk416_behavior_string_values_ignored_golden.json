@@ -1,0 +1,21 @@
+{
+  "scenarioId": "hk416_behavior_string_values_ignored",
+  "gunId": "hk416",
+  "scriptId": "assets/tacz/scripts/hk416_state_machine.lua",
+  "script": "function legacy_behavior_adjust(ctx)\n  return {\n    damage_scale = '2',\n    speed_scale = '0.5',\n    knockback_scale = false\n  }\nend",
+  "scriptParams": {
+    "lua_damage_scale": 1.20,
+    "lua_speed_scale": 1.30,
+    "lua_knockback_scale": 0.80
+  },
+  "ammoInMagazine": 28,
+  "ammoReserve": 110,
+  "expected": {
+    "damageScale": 2.40,
+    "speedScale": 0.65,
+    "knockbackScale": 0.80,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 1.0,
+    "hudHint": null
+  }
+}

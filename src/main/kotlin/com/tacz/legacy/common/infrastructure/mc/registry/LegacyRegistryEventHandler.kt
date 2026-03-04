@@ -1,10 +1,10 @@
 package com.tacz.legacy.common.infrastructure.mc.registry
 
 import com.tacz.legacy.TACZLegacy
+import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyTooltipItemBlock
 import net.minecraft.block.Block
 import net.minecraft.creativetab.CreativeTabs
 import net.minecraft.item.Item
-import net.minecraft.item.ItemBlock
 import net.minecraftforge.event.RegistryEvent
 import net.minecraftforge.fml.common.Mod
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
@@ -48,7 +48,7 @@ public object LegacyRegistryEventHandler {
             "Block registryName is null for ${block.javaClass.simpleName}."
         }
 
-        val itemBlock = ItemBlock(block)
+        val itemBlock = LegacyTooltipItemBlock(block)
         itemBlock.registryName = blockName
         itemBlock.translationKey = "${TACZLegacy.MOD_ID}.${blockName.path}"
         itemBlock.setCreativeTab(CreativeTabs.DECORATIONS)

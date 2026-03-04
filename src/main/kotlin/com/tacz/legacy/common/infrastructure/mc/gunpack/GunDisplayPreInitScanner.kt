@@ -2,6 +2,7 @@ package com.tacz.legacy.common.infrastructure.mc.gunpack
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.tacz.legacy.common.application.gunpack.DisplayVec3
 import com.tacz.legacy.common.application.gunpack.GunDisplayDefinition
 import com.tacz.legacy.common.application.gunpack.GunDisplayScanEntry
 import com.tacz.legacy.common.application.gunpack.GunDisplayScanReport
@@ -259,17 +260,51 @@ public class GunDisplayPreInitScanner {
         val root = parseJsonObject(displayJson) ?: return null
         val lod = root.readObject("lod")
 
+        val ammoCountStyle = root.readString("ammo_count_style")
+            ?.trim()
+            ?.lowercase()
+            ?.ifBlank { null }
+        val damageStyle = root.readString("damage_style")
+            ?.trim()
+            ?.lowercase()
+            ?.ifBlank { null }
+
+        val transform = root.readObject("transform")
+        val transformScale = transform?.readObject("scale")
+        val transformScaleThirdPerson = transformScale?.readVec3("thirdperson")
+        val transformScaleGround = transformScale?.readVec3("ground")
+        val transformScaleFixed = transformScale?.readVec3("fixed")
+
+        val muzzleFlash = root.readObject("muzzle_flash")
+        val muzzleFlashTexturePath = toTextureAssetPath(muzzleFlash?.readString("texture"))
+        val muzzleFlashScale = muzzleFlash?.readDouble("scale")?.toFloat()
+
         val modelPath = toGeoModelAssetPath(root.readString("model"))
         val modelTexturePath = toTextureAssetPath(root.readString("texture"))
         val lodModelPath = toGeoModelAssetPath(lod?.readString("model"))
         val lodTexturePath = toTextureAssetPath(lod?.readString("texture"))
         val slotTexturePath = toTextureAssetPath(root.readString("slot"))
         val animationPath = toAnimationAssetPath(root.readString("animation"))
+        val defaultAnimationPath = toAnimationAssetPath(root.readString("default_animation"))
         val useDefaultAnimation = root.readString("use_default_animation")
             ?.trim()
             ?.lowercase()
             ?.ifBlank { null }
-        val stateMachinePath = toScriptAssetPath(root.readString("state_machine"))
+        val rawStateMachine = root.readString("state_machine")
+            ?.trim()
+            ?.ifBlank { null }
+        val parsedStateMachinePath = toScriptAssetPath(rawStateMachine)
+        val stateMachinePath = parsedStateMachinePath
+            ?: if (rawStateMachine == null) DEFAULT_STATE_MACHINE_ASSET_PATH else null
+        val stateMachineSource = when {
+            parsedStateMachinePath != null -> STATE_MACHINE_SOURCE_DISPLAY
+            rawStateMachine == null -> STATE_MACHINE_SOURCE_DEFAULT_FALLBACK
+            else -> STATE_MACHINE_SOURCE_INVALID
+        }
+        val stateMachineScriptContent = stateMachinePath
+            ?.let(assetReader)
+            ?.trim()
+            ?.ifBlank { null }
         val stateMachineParams = parseStateMachineParams(root.readObject("state_machine_param"))
         val playerAnimator3rdPath = toPlayerAnimatorAssetPath(root.readString("player_animator_3rd"))
         val thirdPersonAnimation = root.readString("third_person_animation")?.trim()?.ifBlank { null }
@@ -301,10 +336,7 @@ public class GunDisplayPreInitScanner {
 
         val modelParseSucceeded = modelPath != null && modelStats != null
         val animationParseSucceeded = animationPath != null && animationStats != null
-        val stateMachineResolved = stateMachinePath
-            ?.let(assetReader)
-            ?.isNotBlank()
-            ?: false
+        val stateMachineResolved = !stateMachineScriptContent.isNullOrBlank()
         val playerAnimatorResolved = playerAnimator3rdPath
             ?.let(assetReader)
             ?.isNotBlank()
@@ -320,8 +352,11 @@ public class GunDisplayPreInitScanner {
             lodTexturePath = lodTexturePath,
             slotTexturePath = slotTexturePath,
             animationPath = animationPath,
+            defaultAnimationPath = defaultAnimationPath,
             useDefaultAnimation = useDefaultAnimation,
             stateMachinePath = stateMachinePath,
+            stateMachineSource = stateMachineSource,
+            stateMachineScriptContent = stateMachineScriptContent,
             stateMachineParams = stateMachineParams,
             playerAnimator3rdPath = playerAnimator3rdPath,
             thirdPersonAnimation = thirdPersonAnimation,
@@ -361,7 +396,14 @@ public class GunDisplayPreInitScanner {
             reloadTacticalSoundId = reloadTacticalSoundId,
             modelGeometryCount = modelStats?.geometryCount,
             modelRootBoneCount = modelStats?.rootBoneCount,
-            modelRootBoneNames = modelStats?.rootBoneNames
+            modelRootBoneNames = modelStats?.rootBoneNames,
+            ammoCountStyle = ammoCountStyle,
+            damageStyle = damageStyle,
+            transformScaleThirdPerson = transformScaleThirdPerson,
+            transformScaleGround = transformScaleGround,
+            transformScaleFixed = transformScaleFixed,
+            muzzleFlashTexturePath = muzzleFlashTexturePath,
+            muzzleFlashScale = muzzleFlashScale
         )
     }
 
@@ -800,6 +842,30 @@ public class GunDisplayPreInitScanner {
         return element.asJsonArray
     }
 
+    private fun JsonObject.readVec3(name: String): DisplayVec3? {
+        val array = readArray(name) ?: return null
+        if (array.size() < 3) {
+            return null
+        }
+
+        fun readFloatAt(index: Int): Float? {
+            val element = array.get(index) ?: return null
+            if (!element.isJsonPrimitive || !element.asJsonPrimitive.isNumber) {
+                return null
+            }
+            val value = element.asFloat
+            if (!value.isFinite()) {
+                return null
+            }
+            return value
+        }
+
+        val x = readFloatAt(0) ?: return null
+        val y = readFloatAt(1) ?: return null
+        val z = readFloatAt(2) ?: return null
+        return DisplayVec3(x, y, z)
+    }
+
     private data class ResourceId(
         val namespace: String,
         val path: String
@@ -843,6 +909,10 @@ public class GunDisplayPreInitScanner {
         private const val PACK_META_FILE_NAME: String = "gunpack.meta.json"
         private const val LOG_DETAILS_LIMIT: Int = 20
         private const val MAX_ROOT_BONE_NAMES: Int = 8
+        private const val DEFAULT_STATE_MACHINE_ASSET_PATH: String = "assets/tacz/scripts/default_state_machine.lua"
+        private const val STATE_MACHINE_SOURCE_DISPLAY: String = "display"
+        private const val STATE_MACHINE_SOURCE_DEFAULT_FALLBACK: String = "fallback_default"
+        private const val STATE_MACHINE_SOURCE_INVALID: String = "invalid"
     }
 
 }

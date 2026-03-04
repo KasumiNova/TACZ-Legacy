@@ -1,0 +1,21 @@
+{
+  "scenarioId": "ak12_alias_precedence_with_overlay",
+  "gunId": "ak12",
+  "scriptId": "assets/tacz/scripts/ak12_state_machine.lua",
+  "script": "function legacy_behavior_adjust(ctx)\n  return {\n    damage_scale = 0.5,\n    rpm_scale = 2.0\n  }\nend",
+  "scriptParams": {
+    "lua_damage_scale": 1.30,
+    "script_damage_scale": 0.50,
+    "damage_scale": 2.00
+  },
+  "ammoInMagazine": 24,
+  "ammoReserve": 120,
+  "expected": {
+    "damageScale": 0.65,
+    "speedScale": 1.0,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 2.0,
+    "hudHint": null
+  }
+}

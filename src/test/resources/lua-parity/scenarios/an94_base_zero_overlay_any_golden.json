@@ -1,0 +1,21 @@
+{
+  "scenarioId": "an94_base_zero_overlay_any",
+  "gunId": "an94",
+  "scriptId": "assets/tacz/scripts/an94_state_machine.lua",
+  "script": "function legacy_behavior_adjust(ctx)\n  return {\n    damage_scale = 2.5,\n    speed_scale = 3.0\n  }\nend",
+  "scriptParams": {
+    "lua_damage_scale": 0.0,
+    "lua_speed_scale": 0.0,
+    "lua_inaccuracy_scale": 1.20
+  },
+  "ammoInMagazine": 30,
+  "ammoReserve": 90,
+  "expected": {
+    "damageScale": 0.0,
+    "speedScale": 0.0,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.20,
+    "rpmScale": 1.0,
+    "hudHint": null
+  }
+}

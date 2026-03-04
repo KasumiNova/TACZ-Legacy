@@ -1,0 +1,21 @@
+{
+  "scenarioId": "ak47_low_ammo",
+  "gunId": "ak47",
+  "scriptId": "assets/tacz/scripts/ak47_state_machine.lua",
+  "script": "function legacy_behavior_adjust(ctx)\n    local result = {}\n    if ctx.ammo_in_magazine <= 5 then\n        result.damage_scale = 1.25\n        result.rpm_scale = 0.85\n    end\n    if ctx.script_params and ctx.script_params.bonus_speed then\n        result.speed_scale = ctx.script_params.bonus_speed\n    end\n    return result\nend\n\nfunction legacy_hud_hint(ctx)\n    if ctx.ammo_in_magazine <= 3 then\n        return 'SCRIPT: MAG LOW'\n    end\n    return nil\nend",
+  "scriptParams": {
+    "lua_damage_scale": 1.10,
+    "bonus_speed": 1.20,
+    "lua_hud_low_mag_threshold": 2
+  },
+  "ammoInMagazine": 2,
+  "ammoReserve": 50,
+  "expected": {
+    "damageScale": 1.375,
+    "speedScale": 1.2,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 0.85,
+    "hudHint": "SCRIPT: MAG LOW"
+  }
+}

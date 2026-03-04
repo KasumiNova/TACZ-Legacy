@@ -177,6 +177,39 @@ public class WeaponRuntimeRegistryTest {
         assertTrue((snapshot?.reloadTicksRemaining ?: 0) > 0)
     }
 
+    @Test
+    public fun `replaceFromGunPack should apply fire mode adjust and lua script params`() {
+        val analyzer = GunPackCompatibilityBatchAnalyzer()
+        val gunPackSnapshot = GunPackRuntimeRegistry().replace(
+            analyzer.analyze(
+                listOf(
+                    GunPackCompatibilitySource(
+                        "ak47_adjusted_data.json",
+                        adjustedGunJson(gunId = "ak47")
+                    )
+                )
+            )
+        )
+
+        val registry = WeaponRuntimeRegistry()
+        val snapshot = registry.replaceFromGunPack(gunPackSnapshot)
+        val definition = snapshot.findDefinition("ak47")
+
+        assertNotNull(definition)
+        assertEquals(360, definition?.spec?.roundsPerMinute)
+        assertEquals(0.2f, definition?.ballistics?.speed ?: 0f, 0.0001f)
+        assertEquals(13.75f, definition?.ballistics?.damage ?: 0f, 0.0001f)
+        assertEquals(3.0f, definition?.ballistics?.knockback ?: 0f, 0.0001f)
+        assertEquals(0.5f, definition?.ballistics?.inaccuracy?.stand ?: 0f, 0.0001f)
+        assertEquals(2.6f, definition?.ballistics?.inaccuracy?.aim ?: 0f, 0.0001f)
+
+        val session = registry.createSession("ak47")
+        assertNotNull(session)
+        assertEquals(0.2f, session?.defaultBehaviorConfig?.bulletSpeed ?: 0f, 0.0001f)
+        assertEquals(13.75f, session?.defaultBehaviorConfig?.bulletDamage ?: 0f, 0.0001f)
+        assertEquals(0.5f, session?.defaultBehaviorConfig?.bulletInaccuracyDegrees ?: 0f, 0.0001f)
+    }
+
     private fun validGunJson(gunId: String, ammoAmount: Int): String =
         """
         {
@@ -204,5 +237,59 @@ public class WeaponRuntimeRegistryTest {
           }
         }
         """.trimIndent()
+
+        private fun adjustedGunJson(gunId: String): String =
+                """
+                {
+                    "id": "$gunId",
+                    "ammo": "tacz:556",
+                    "ammo_amount": 30,
+                    "bolt": "closed_bolt",
+                    "rpm": 600,
+                    "fire_mode": ["auto"],
+                    "reload": {
+                        "type": "magazine",
+                        "infinite": false,
+                        "feed": {
+                            "empty": 2.0,
+                            "tactical": 1.8
+                        }
+                    },
+                    "inaccuracy": {
+                        "stand": 1.0,
+                        "move": 2.0,
+                        "sneak": 3.0,
+                        "lie": 4.0,
+                        "aim": 5.0
+                    },
+                    "bullet": {
+                        "life": 10.0,
+                        "bullet_amount": 1,
+                        "damage": 10.0,
+                        "speed": 6.0,
+                        "gravity": 0.02,
+                        "friction": 0.1,
+                        "pierce": 2,
+                        "knockback": 1.2
+                    },
+                    "fire_mode_adjust": {
+                        "AUTO": {
+                            "damage": 2.5,
+                            "rpm": 120,
+                            "speed": 2.0,
+                            "knockback": 0.3,
+                            "aim_inaccuracy": 1.5,
+                            "other_inaccuracy": 0.25
+                        }
+                    },
+                    "script_param": {
+                        "lua_damage_scale": 1.1,
+                        "lua_speed_scale": 0.5,
+                        "lua_knockback_scale": 2.0,
+                        "lua_inaccuracy_scale": 0.4,
+                        "lua_rpm_scale": 0.5
+                    }
+                }
+                """.trimIndent()
 
 }

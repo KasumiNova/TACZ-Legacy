@@ -1,0 +1,19 @@
+{
+  "scenarioId": "uzi_overlay_rpm_only",
+  "gunId": "uzi",
+  "scriptId": "assets/tacz/scripts/uzi_state_machine.lua",
+  "script": "function legacy_behavior_adjust(ctx)\n  return { rpm_scale = 0.7 }\nend",
+  "scriptParams": {
+    "lua_damage_scale": 1.10
+  },
+  "ammoInMagazine": 25,
+  "ammoReserve": 100,
+  "expected": {
+    "damageScale": 1.10,
+    "speedScale": 1.0,
+    "knockbackScale": 1.0,
+    "inaccuracyScale": 1.0,
+    "rpmScale": 0.7,
+    "hudHint": null
+  }
+}

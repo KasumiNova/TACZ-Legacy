@@ -2,8 +2,13 @@ package com.tacz.legacy.common.infrastructure.mc.registry
 
 import com.tacz.legacy.common.application.gunpack.GunPackRuntime
 import com.tacz.legacy.common.application.gunpack.GunPackRuntimeSnapshot
+import com.tacz.legacy.common.application.gunpack.WeaponAttachmentCompatibilityRuntime
+import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyAmmoBoxItem
+import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyAmmoItem
+import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyAttachmentItem
 import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyGunItem
 import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacySimpleItem
+import com.tacz.legacy.common.infrastructure.mc.weapon.WeaponAttachmentSlot
 import net.minecraft.item.Item
 
 public object LegacyItems {
@@ -74,14 +79,54 @@ public object LegacyItems {
                 extraCreativeTabs = extraTabs
             )
         }
-        if (dynamicGunItems.isEmpty()) {
-            return listOf(ak47, weaponDebugCore)
+        val dynamicAmmoItems = dynamicAmmoDescriptors(snapshot).flatMap { descriptor ->
+            listOf(
+                LegacyAmmoItem(
+                    registryPath = descriptor.registryPath,
+                    ammoId = descriptor.ammoId,
+                    roundsPerItem = descriptor.roundsPerItem,
+                    sourceId = descriptor.sourceId,
+                    iconTextureAssetPath = descriptor.iconTextureAssetPath,
+                    creativeTab = LegacyCreativeTabs.OTHER
+                ),
+                LegacyAmmoBoxItem(
+                    registryPath = descriptor.boxRegistryPath,
+                    ammoId = descriptor.ammoId,
+                    roundsPerUse = descriptor.roundsPerUse,
+                    capacity = descriptor.boxCapacity,
+                    sourceId = descriptor.sourceId,
+                    iconTextureAssetPath = descriptor.iconTextureAssetPath,
+                    creativeTab = LegacyCreativeTabs.OTHER
+                )
+            )
         }
-        return dynamicGunItems + weaponDebugCore
+        val attachmentItems = dynamicAttachmentDescriptors().map { descriptor ->
+            LegacyAttachmentItem(
+                registryPath = descriptor.registryPath,
+                slot = descriptor.slot,
+                attachmentId = descriptor.attachmentId,
+                sourceId = descriptor.sourceId,
+                iconTextureAssetPath = descriptor.iconTextureAssetPath,
+                creativeTab = LegacyCreativeTabs.OTHER
+            )
+        }
+
+        if (dynamicGunItems.isEmpty()) {
+            return listOf(ak47) + dynamicAmmoItems + attachmentItems + weaponDebugCore
+        }
+        return dynamicGunItems + dynamicAmmoItems + attachmentItems + weaponDebugCore
     }
 
     public fun dynamicGunRegistryPaths(snapshot: GunPackRuntimeSnapshot): List<String> {
         return dynamicGunDescriptors(snapshot).map { it.registryPath }
+    }
+
+    public fun dynamicStandaloneRegistryPaths(snapshot: GunPackRuntimeSnapshot): List<String> {
+        return buildList {
+            addAll(dynamicGunDescriptors(snapshot).map { it.registryPath })
+            addAll(dynamicAmmoDescriptors(snapshot).flatMap { listOf(it.registryPath, it.boxRegistryPath) })
+            addAll(dynamicAttachmentDescriptors().map { it.registryPath })
+        }.distinct().sorted()
     }
 
     public fun classificationStats(snapshot: GunPackRuntimeSnapshot): GunCategoryClassificationStats {
@@ -136,7 +181,94 @@ public object LegacyItems {
     }
 
     private fun normalizeGunRegistryPath(rawGunId: String): String? {
-        val normalized = rawGunId.trim().lowercase()
+        val normalized = normalizeContentPath(rawGunId)
+        return normalized?.ifBlank { null }
+    }
+
+    internal fun dynamicAmmoDescriptors(snapshot: GunPackRuntimeSnapshot): List<DynamicAmmoDescriptor> {
+        val attachmentSnapshot = WeaponAttachmentCompatibilityRuntime.registry().snapshot()
+        val descriptorsByPath = linkedMapOf<String, DynamicAmmoDescriptor>()
+
+        snapshot.loadedGunsByAmmoId
+            .entries
+            .sortedBy { it.key }
+            .forEach { (ammoId, guns) ->
+                val normalizedAmmoPath = normalizeContentPath(ammoId) ?: return@forEach
+                val registryPath = "ammo_$normalizedAmmoPath"
+                val boxRegistryPath = "ammo_box_$normalizedAmmoPath"
+                val roundsPerItem = guns
+                    .map { it.ammoAmount }
+                    .filter { it > 0 }
+                    .minOrNull()
+                    ?: 30
+                val boxCapacity = (roundsPerItem * 5).coerceAtLeast(roundsPerItem)
+                val sourceId = guns.firstOrNull()?.sourceId
+                val iconTextureAssetPath = attachmentSnapshot.resolveAmmoIconTexturePath(ammoId)
+                    ?: defaultAmmoSlotTexturePath(ammoId)
+
+                descriptorsByPath.putIfAbsent(
+                    registryPath,
+                    DynamicAmmoDescriptor(
+                        ammoId = ammoId,
+                        registryPath = registryPath,
+                        boxRegistryPath = boxRegistryPath,
+                        sourceId = sourceId,
+                        iconTextureAssetPath = iconTextureAssetPath,
+                        roundsPerItem = roundsPerItem,
+                        roundsPerUse = roundsPerItem,
+                        boxCapacity = boxCapacity
+                    )
+                )
+            }
+
+        return descriptorsByPath.values.sortedBy { it.registryPath }
+    }
+
+    internal fun dynamicAttachmentDescriptors(): List<DynamicAttachmentDescriptor> {
+        val snapshot = WeaponAttachmentCompatibilityRuntime.registry().snapshot()
+        val descriptorsByPath = linkedMapOf<String, DynamicAttachmentDescriptor>()
+
+        snapshot.attachmentsById
+            .values
+            .sortedBy { it.attachmentId }
+            .forEach { definition ->
+                val slot = definition.attachmentType
+                    ?.let(WeaponAttachmentSlot::fromSlotKey)
+                    ?: return@forEach
+
+                val normalizedPath = normalizeContentPath(definition.attachmentId) ?: return@forEach
+                val registryPath = "attachment_$normalizedPath"
+
+                descriptorsByPath.putIfAbsent(
+                    registryPath,
+                    DynamicAttachmentDescriptor(
+                        attachmentId = definition.attachmentId,
+                        slot = slot,
+                        registryPath = registryPath,
+                        sourceId = definition.sourceId,
+                        iconTextureAssetPath = definition.iconTextureAssetPath
+                    )
+                )
+            }
+
+        return descriptorsByPath.values.sortedBy { it.registryPath }
+    }
+
+    private fun defaultAmmoSlotTexturePath(ammoId: String): String? {
+        val normalized = ammoId.trim().lowercase().ifBlank { return null }
+        val namespace = if (normalized.contains(':')) normalized.substringBefore(':') else "tacz"
+        val path = normalized.substringAfter(':')
+            .map { ch -> if (ch.isLetterOrDigit() || ch == '_' || ch == '/' || ch == '-') ch else '_' }
+            .joinToString(separator = "")
+            .replace("__+".toRegex(), "_")
+            .replace("//+".toRegex(), "/")
+            .trim('_', '/')
+            .ifBlank { return null }
+        return "assets/$namespace/textures/ammo/slot/$path.png"
+    }
+
+    private fun normalizeContentPath(raw: String): String? {
+        val normalized = raw.trim().lowercase()
             .map { ch -> if (ch.isLetterOrDigit()) ch else '_' }
             .joinToString(separator = "")
             .replace("__+".toRegex(), "_")
@@ -150,6 +282,25 @@ public object LegacyItems {
         val registryPath: String,
         val tabType: LegacyGunTabType,
         val resolutionSource: GunCategoryResolutionSource
+    )
+
+    internal data class DynamicAmmoDescriptor(
+        val ammoId: String,
+        val registryPath: String,
+        val boxRegistryPath: String,
+        val sourceId: String?,
+        val iconTextureAssetPath: String?,
+        val roundsPerItem: Int,
+        val roundsPerUse: Int,
+        val boxCapacity: Int
+    )
+
+    internal data class DynamicAttachmentDescriptor(
+        val attachmentId: String,
+        val slot: WeaponAttachmentSlot,
+        val registryPath: String,
+        val sourceId: String,
+        val iconTextureAssetPath: String?
     )
 
 }

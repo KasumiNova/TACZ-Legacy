@@ -6,11 +6,16 @@ import com.tacz.legacy.common.infrastructure.mc.network.LegacyNetworkHandler
 import com.tacz.legacy.common.infrastructure.mc.entity.LegacyEntityRegistrar
 import com.tacz.legacy.common.infrastructure.mc.registry.LegacyItems
 import com.tacz.legacy.common.infrastructure.mc.weapon.WeaponRuntimeMcBridge
+import com.tacz.legacy.common.infrastructure.mc.workbench.WeaponWorkbenchSessionTickEventHandler
+import net.minecraft.entity.player.EntityPlayer
+import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.fml.common.event.FMLInitializationEvent
 import net.minecraftforge.fml.common.event.FMLPostInitializationEvent
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent
 
 public open class CommonProxy {
+
+    private val workbenchSessionTickEventHandler: WeaponWorkbenchSessionTickEventHandler = WeaponWorkbenchSessionTickEventHandler()
 
     public open fun preInit(event: FMLPreInitializationEvent) {
         val outcome = GunPackReloadCoordinator.bootstrap(
@@ -45,6 +50,35 @@ public open class CommonProxy {
             displaySnapshot.failedSources.size
         )
 
+        val tooltipLangSnapshot = outcome.tooltipLangSnapshot
+        TACZLegacy.logger.info(
+            "[TooltipLang] snapshot: locales={} entries={} failed={}",
+            tooltipLangSnapshot.totalLocales,
+            tooltipLangSnapshot.totalEntries,
+            tooltipLangSnapshot.failedSources.size
+        )
+
+        val tooltipIndexSnapshot = outcome.tooltipIndexSnapshot
+        TACZLegacy.logger.info(
+            "[TooltipIndex] snapshot: guns={} attachments={} ammo={} blocks={} total={} failed={}",
+            tooltipIndexSnapshot.gunEntriesById.size,
+            tooltipIndexSnapshot.attachmentEntriesById.size,
+            tooltipIndexSnapshot.ammoEntriesById.size,
+            tooltipIndexSnapshot.blockEntriesById.size,
+            tooltipIndexSnapshot.totalEntries,
+            tooltipIndexSnapshot.failedSources.size
+        )
+
+        val attachmentSnapshot = outcome.attachmentCompatibilitySnapshot
+        TACZLegacy.logger.info(
+            "[AttachmentCompat] snapshot: attachments={} allowRules={} tags={} ammoIcons={} failed={}",
+            attachmentSnapshot.attachmentsById.size,
+            attachmentSnapshot.allowEntriesByGunId.size,
+            attachmentSnapshot.tagsByTagId.size,
+            attachmentSnapshot.ammoIconTextureByAmmoId.size,
+            attachmentSnapshot.failedSources.size
+        )
+
         val weaponRuntimeSnapshot = outcome.weaponRuntimeSnapshot
         TACZLegacy.logger.info(
             "[WeaponRuntime] definitions={} failedMappings={}",
@@ -55,6 +89,7 @@ public open class CommonProxy {
         LegacyEntityRegistrar.registerEntities()
         LegacyNetworkHandler.init(TACZLegacy.logger)
         WeaponRuntimeMcBridge.install(TACZLegacy.logger)
+        MinecraftForge.EVENT_BUS.register(workbenchSessionTickEventHandler)
 
         if (weaponRuntimeSnapshot.failedGunIds.isNotEmpty()) {
             val sample = weaponRuntimeSnapshot.failedGunIds
@@ -100,6 +135,14 @@ public open class CommonProxy {
     public open fun init(event: FMLInitializationEvent): Unit = Unit
 
     public open fun postInit(event: FMLPostInitializationEvent): Unit = Unit
+
+    public open fun openWeaponWorkbenchScreen(player: EntityPlayer): Boolean = false
+
+    public open fun handleWeaponWorkbenchOpenPacket(gunId: String, blockX: Int, blockY: Int, blockZ: Int): Boolean = false
+
+    public open fun handleWeaponWorkbenchRefreshPacket(): Unit = Unit
+
+    public open fun handleWeaponWorkbenchClosePacket(reasonMessage: String): Unit = Unit
 
     private companion object {
         private const val CONFLICT_LOG_LIMIT: Int = 10

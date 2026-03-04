@@ -1,6 +1,15 @@
 package com.tacz.legacy.common.infrastructure.mc.registry
 
 import com.tacz.legacy.common.application.gunpack.GunPackRuntimeSnapshot
+import com.tacz.legacy.common.application.gunpack.WeaponAttachmentCompatibilityRuntime
+import com.tacz.legacy.common.application.gunpack.WeaponAttachmentCompatibilitySnapshot
+import com.tacz.legacy.common.application.gunpack.WeaponAttachmentDefinition
+import com.tacz.legacy.common.domain.gunpack.GunBoltType
+import com.tacz.legacy.common.domain.gunpack.GunBulletData
+import com.tacz.legacy.common.domain.gunpack.GunData
+import com.tacz.legacy.common.domain.gunpack.GunFeedType
+import com.tacz.legacy.common.domain.gunpack.GunFireMode
+import com.tacz.legacy.common.domain.gunpack.GunReloadData
 import com.tacz.legacy.common.infrastructure.mc.registry.item.LegacyGunItem
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -13,6 +22,7 @@ public class LegacyItemsTest {
     @After
     public fun cleanupRegisteredCache() {
         LegacyItems.clearRegisteredStandaloneForTests()
+        WeaponAttachmentCompatibilityRuntime.registry().clear()
     }
 
     @Test
@@ -35,7 +45,8 @@ public class LegacyItemsTest {
         val items = LegacyItems.standalone(GunPackRuntimeSnapshot.empty())
             .mapNotNull { it.registryName?.path }
 
-        assertEquals(listOf(LegacyContentIds.AK47, LegacyContentIds.WEAPON_DEBUG_CORE), items)
+        assertTrue(items.contains(LegacyContentIds.AK47))
+        assertTrue(items.contains(LegacyContentIds.WEAPON_DEBUG_CORE))
     }
 
     @Test
@@ -44,7 +55,7 @@ public class LegacyItemsTest {
             snapshotWithGunIds("m4a1", "ak12")
         ).mapNotNull { it.registryName?.path }
 
-        assertEquals(listOf("ak12", "m4a1", LegacyContentIds.WEAPON_DEBUG_CORE), items)
+        assertTrue(items.containsAll(listOf("ak12", "m4a1", LegacyContentIds.WEAPON_DEBUG_CORE)))
         assertTrue(items.none { it == LegacyContentIds.AK47 })
     }
 
@@ -111,10 +122,71 @@ public class LegacyItemsTest {
         val second = LegacyItems.prepareRegisteredStandalone(secondSnapshot)
 
         assertSame(first, second)
-        assertEquals(
-            listOf("ak47", "m4a1", LegacyContentIds.WEAPON_DEBUG_CORE),
-            first.mapNotNull { it.registryName?.path }
+        val firstPaths = first.mapNotNull { it.registryName?.path }
+        assertTrue(firstPaths.containsAll(listOf("ak47", "m4a1", LegacyContentIds.WEAPON_DEBUG_CORE)))
+    }
+
+    @Test
+    public fun `dynamic attachment descriptors should be generated from runtime attachment catalog`() {
+        WeaponAttachmentCompatibilityRuntime.registry().replace(
+            WeaponAttachmentCompatibilitySnapshot(
+                loadedAtEpochMillis = 0L,
+                attachmentsById = mapOf(
+                    "tacz:sight_rmr_dot" to WeaponAttachmentDefinition(
+                        attachmentId = "tacz:sight_rmr_dot",
+                        attachmentType = "SCOPE",
+                        sourceId = "sample_pack/data/tacz/index/attachments/sight_rmr_dot.json",
+                        displayId = "tacz:sight_rmr_dot_display",
+                        iconTextureAssetPath = "assets/tacz/textures/attachment/slot/sight_rmr_dot.png"
+                    )
+                ),
+                allowEntriesByGunId = emptyMap(),
+                tagsByTagId = emptyMap(),
+                ammoIconTextureByAmmoId = emptyMap(),
+                failedSources = emptySet()
+            )
         )
+
+        val descriptors = LegacyItems.dynamicAttachmentDescriptors()
+
+        assertEquals(1, descriptors.size)
+        assertEquals("attachment_tacz_sight_rmr_dot", descriptors.first().registryPath)
+        assertEquals("tacz:sight_rmr_dot", descriptors.first().attachmentId)
+        assertEquals("assets/tacz/textures/attachment/slot/sight_rmr_dot.png", descriptors.first().iconTextureAssetPath)
+    }
+
+    @Test
+    public fun `dynamic ammo descriptors should aggregate ammo ids and infer registry paths`() {
+        val ammo556 = sampleGunData(gunId = "m4a1", ammoId = "5.56_nato", ammoAmount = 30)
+        val ammo9mm = sampleGunData(gunId = "glock_17", ammoId = "9mm", ammoAmount = 17)
+
+        val snapshot = GunPackRuntimeSnapshot(
+            loadedAtEpochMillis = 0L,
+            totalSources = 2,
+            loadedGunsBySourceId = mapOf(
+                ammo556.sourceId to ammo556,
+                ammo9mm.sourceId to ammo9mm
+            ),
+            loadedGunsByAmmoId = mapOf(
+                "5.56_nato" to listOf(ammo556),
+                "9mm" to listOf(ammo9mm)
+            ),
+            sourceIdByGunId = linkedMapOf(
+                ammo556.gunId to ammo556.sourceId,
+                ammo9mm.gunId to ammo9mm.sourceId
+            ),
+            gunTypeByGunId = emptyMap(),
+            duplicateGunIdSources = emptyMap(),
+            failedSources = emptySet(),
+            warningSources = emptySet(),
+            issueHistogram = emptyMap()
+        )
+
+        val descriptors = LegacyItems.dynamicAmmoDescriptors(snapshot)
+
+        assertEquals(listOf("ammo_5_56_nato", "ammo_9mm"), descriptors.map { it.registryPath })
+        assertEquals(listOf("ammo_box_5_56_nato", "ammo_box_9mm"), descriptors.map { it.boxRegistryPath })
+        assertEquals(listOf(30, 17), descriptors.map { it.roundsPerItem })
     }
 
     private fun snapshotWithGunIds(vararg gunIds: String): GunPackRuntimeSnapshot {
@@ -140,6 +212,35 @@ public class LegacyItemsTest {
             failedSources = emptySet(),
             warningSources = emptySet(),
             issueHistogram = emptyMap()
+        )
+    }
+
+    private fun sampleGunData(gunId: String, ammoId: String, ammoAmount: Int): GunData {
+        return GunData(
+            sourceId = "sample/$gunId.json",
+            gunId = gunId,
+            ammoId = ammoId,
+            ammoAmount = ammoAmount,
+            extendedMagAmmoAmount = null,
+            canCrawl = false,
+            canSlide = false,
+            boltType = GunBoltType.CLOSED_BOLT,
+            roundsPerMinute = 600,
+            fireModes = setOf(GunFireMode.AUTO),
+            bullet = GunBulletData(
+                lifeSeconds = 3f,
+                bulletAmount = 1,
+                damage = 5f,
+                speed = 20f,
+                gravity = 0f,
+                pierce = 1
+            ),
+            reload = GunReloadData(
+                type = GunFeedType.MAGAZINE,
+                infinite = false,
+                emptyTimeSeconds = 2f,
+                tacticalTimeSeconds = 1.5f
+            )
         )
     }
 }
