@@ -1,5 +1,21 @@
 package com.tacz.legacy.client.render.item
 
+import com.tacz.legacy.api.client.animation.Animations
+import com.tacz.legacy.api.client.animation.ObjectAnimation
+import com.tacz.legacy.client.animation.GunAnimationControllerSession
+import com.tacz.legacy.client.animation.SessionTrack
+import com.tacz.legacy.client.animation.SessionTrackPlayMode
+import com.tacz.legacy.client.resource.pojo.animation.bedrock.BedrockAnimationFile
+import com.tacz.legacy.client.sound.SoundPlayManager
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.tacz.legacy.client.resource.serialize.AnimationKeyframesSerializer
+import com.tacz.legacy.client.resource.serialize.SoundEffectKeyframesSerializer
+import net.minecraft.util.ResourceLocation
+import com.tacz.legacy.client.resource.pojo.animation.bedrock.AnimationKeyframes
+import com.tacz.legacy.client.resource.pojo.animation.bedrock.SoundEffectKeyframes
+
+
 import com.tacz.legacy.client.gui.WeaponGunsmithImmersiveRuntime
 import com.tacz.legacy.client.render.texture.TaczTextureResourceResolver
 import com.tacz.legacy.client.sound.TaczSoundEngine
@@ -30,7 +46,6 @@ import net.minecraft.client.renderer.vertex.DefaultVertexFormats
 import net.minecraft.item.ItemStack
 import net.minecraft.nbt.NBTTagCompound
 import net.minecraft.util.EnumHandSide
-import net.minecraft.util.ResourceLocation
 import net.minecraft.util.SoundCategory
 import net.minecraftforge.client.event.RenderSpecificHandEvent
 import net.minecraftforge.fml.relauncher.Side
@@ -54,6 +69,10 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
     private val refitViewContinuityByGunId: MutableMap<String, RefitViewContinuityCache> = linkedMapOf()
     private val animationSoundStateBySessionId: MutableMap<String, AnimationSoundPlaybackState> = linkedMapOf()
     private val animationSoundEventAvailabilityById: MutableMap<String, Boolean> = linkedMapOf()
+    
+    private val objectAnimationCache: MutableMap<String, List<com.tacz.legacy.api.client.animation.ObjectAnimation>> = java.util.concurrent.ConcurrentHashMap()
+    private val animationSessions = java.util.concurrent.ConcurrentHashMap<String, com.tacz.legacy.client.animation.GunAnimationControllerSession>()
+
     @Volatile
     private var firstPersonReferenceOffsets: FirstPersonReferenceOffsets = FirstPersonReferenceOffsets.EMPTY
 
@@ -1305,7 +1324,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         val aimTimeSeconds = resolveAimingTimeSeconds(gunId)
         state.progress = resolveAimingProgressStep(
             currentProgress = state.progress,
-            isAiming = isAimingContext(minecraft, player),
+            isAiming = com.tacz.legacy.client.input.WeaponAimInputStateRegistry.resolve(player.cachedUniqueIdString) == true,
             deltaMillis = deltaMillis,
             aimTimeSeconds = aimTimeSeconds
         )
@@ -2077,6 +2096,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         return parsed
     }
 
+
     private fun resolveAnimationPose(
         gunId: String,
         display: GunDisplayDefinition?,
@@ -2087,1335 +2107,140 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         if (display == null) {
             return null
         }
-
-        val animationSet = resolveAnimationSet(display, minecraft)
-            ?: resolveDefaultAnimationSet(display, minecraft)
-            ?: return null
         val player = minecraft.player as? AbstractClientPlayer ?: return null
         val sessionId = clientSessionId(player.uniqueID.toString())
-        val nowMillis = System.currentTimeMillis()
-        val playback = resolvePlaybackClip(
-            gunId = gunId,
-            display = display,
-            animationSet = animationSet,
-            minecraft = minecraft,
-            player = player,
-            sessionId = sessionId,
-            nowMillis = nowMillis,
-            allowContextualFallback = allowContextualFallback
-        ) ?: return null
 
-        val playbackGunId = playback.playbackGunId ?: gunId
-        val playbackDisplay = if (playbackGunId == gunId) {
-            display
-        } else {
-            GunDisplayRuntime.registry().snapshot().findDefinition(playbackGunId) ?: display
+        val cacheKey = "${sessionId}_${gunId}"
+        var session = animationSessions[cacheKey]
+
+        if (session == null) {
+            val defaults = resolveObjectAnimations(display.defaultAnimationPath, display.useDefaultAnimation, true, minecraft) ?: emptyList()
+            val primary = resolveObjectAnimations(display.animationPath, null, false, minecraft) ?: emptyList()
+
+            val combined = mutableListOf<ObjectAnimation>()
+            combined.addAll(defaults)
+            combined.addAll(primary)
+
+            if (combined.isEmpty()) return null
+            val allBones = combined.flatMap { it.channels.keys }.toSet()
+            session = GunAnimationControllerSession(combined, allBones)
+            animationSessions[cacheKey] = session
         }
-        val playbackAnimationSet = if (playbackGunId == gunId) {
-            animationSet
-        } else {
-            resolveAnimationSet(playbackDisplay, minecraft)
-                ?: resolveDefaultAnimationSet(playbackDisplay, minecraft)
-                ?: animationSet
-        }
-        val playbackDefaultAnimationSet = resolveDefaultAnimationSet(playbackDisplay, minecraft)
 
-        val primaryClip = findAnimationClip(playbackAnimationSet, playback.clipName) ?: return null
-        if (enableSoundDispatch && minecraft.renderViewEntity === player) {
-            dispatchAnimationSoundEffects(
-                sessionId = sessionId,
-                gunId = playbackGunId,
-                clipType = playback.clipType,
-                clip = primaryClip,
-                display = playbackDisplay,
-                elapsedMillis = playback.elapsedMillis,
-                progress = playback.progress,
-                player = player
-            )
-        }
-        val primaryPose = sampleAnimationPose(
-            clip = primaryClip,
-            progress = playback.progress,
-            elapsedMillis = playback.elapsedMillis
-        )
+        val runtimeSnapshot = WeaponRuntimeMcBridge.animationSnapshotOrNull(sessionId)
 
-        // 对齐 TACZ 状态机“基座 + 叠加轨道”思路：
-        // 1) 优先使用 static_idle 作为基础姿态并持续循环；
-        // 2) 若缺失 static_idle，则在非 IDLE 片段下回退为 idle 基座；
-        // 3) primary 始终作为覆盖层，确保 FIRE/RELOAD 等动作可正确覆盖关键骨骼。
-        val staticBaseResolved = resolveStaticBaseClip(
-            display = playbackDisplay,
-            animationSet = playbackAnimationSet,
-            fallbackAnimationSet = playbackDefaultAnimationSet
-        )
+        val state = renderAnimationStateBySessionId.getOrPut(sessionId) { RenderAnimationSessionState() }
+        var actualRenderGunId = gunId
+        var actualDisplay = display
 
-        val targetPose = when {
-            staticBaseResolved != null -> {
-                val (_, staticBaseClip) = staticBaseResolved
-                if (normalizeClipToken(staticBaseClip.name) == normalizeClipToken(primaryClip.name)) {
-                    primaryPose
-                } else {
-                    val staticBasePose = sampleAnimationPose(
-                        clip = staticBaseClip,
-                        progress = 0f,
-                        elapsedMillis = nowMillis
-                    )
-                    mergeAnimationPose(staticBasePose, primaryPose)
-                }
-            }
+        if (allowContextualFallback && state.lastGunId != gunId) {
+            val prev = state.lastGunId
+            state.lastGunId = gunId
+            state.putAwayRenderGunId = prev
+            state.putAwayStartedAtMillis = System.currentTimeMillis()
 
-            playback.clipType == WeaponAnimationClipType.IDLE -> primaryPose
-
-            else -> {
-                val idleResolved = resolveClipByType(
-                    display = playbackDisplay,
-                    animationSet = playbackAnimationSet,
-                    clipType = WeaponAnimationClipType.IDLE,
-                    fallbackAnimationSet = playbackDefaultAnimationSet
-                )
-                if (idleResolved == null) {
-                    primaryPose
-                } else {
-                    val (_, idleClip) = idleResolved
-                    if (normalizeClipToken(idleClip.name) == normalizeClipToken(primaryClip.name)) {
-                        primaryPose
-                    } else {
-                        val idlePose = sampleAnimationPose(
-                            clip = idleClip,
-                            progress = 0f,
-                            elapsedMillis = nowMillis
+            if (prev != null) {
+                val prevSession = animationSessions["${sessionId}_${prev}"]
+                prevSession?.let {
+                    it.syncFromSnapshots(listOf(
+                        SessionTrack(
+                            trackKey = "0:0",
+                            animationName = "put_away",
+                            playMode = SessionTrackPlayMode.PLAY_ONCE_STOP,
+                            progress = 0f
                         )
-                        mergeAnimationPose(idlePose, primaryPose)
-                    }
+                    ))
                 }
             }
         }
 
-        val transitionedPose = applyClipPoseTransition(
-            sessionId = sessionId,
-            gunId = playbackGunId,
-            clipType = playback.clipType,
-            clipName = primaryClip.name,
-            targetPose = targetPose,
-            nowMillis = nowMillis
-        )
+        val now = System.currentTimeMillis()
+        if (state.putAwayRenderGunId != null && now - state.putAwayStartedAtMillis < 500L) {
+             actualRenderGunId = state.putAwayRenderGunId!!
+             actualDisplay = GunDisplayRuntime.registry().snapshot().findDefinition(actualRenderGunId) ?: display
+        } else {
+             state.putAwayRenderGunId = null
+        }
+
+        val activeSession = if (actualRenderGunId == gunId) session else (animationSessions["${sessionId}_${actualRenderGunId}"] ?: session)
+
+        if (actualRenderGunId == gunId && runtimeSnapshot != null && runtimeSnapshot.gunId.trim().lowercase() == gunId.lowercase()) {
+            val tracks = mutableListOf<SessionTrack>()
+            tracks.add(SessionTrack("0:0", "static_idle", SessionTrackPlayMode.LOOP, 0f))
+            
+            val clipName = mapClipTypeToAnimName(runtimeSnapshot.clip)
+            if (clipName != null) {
+                tracks.add(SessionTrack("1:0", clipName, SessionTrackPlayMode.PLAY_ONCE_HOLD, runtimeSnapshot.progress))
+            }
+            activeSession.syncFromSnapshots(tracks)
+        }
+
+        val prevRenderGunId = SoundPlayManager.currentRenderGunId
+        if (enableSoundDispatch) {
+            SoundPlayManager.currentRenderGunId = actualRenderGunId
+        } else {
+            SoundPlayManager.currentRenderGunId = ""
+        }
+
+        val pose = activeSession.updateAndCollectPose()
+
+        SoundPlayManager.currentRenderGunId = prevRenderGunId
 
         return ResolvedAnimationPose(
-            pose = transitionedPose,
-            playbackGunId = playbackGunId,
-            playbackDisplay = playbackDisplay
+            pose = pose,
+            playbackGunId = actualRenderGunId,
+            playbackDisplay = actualDisplay
         )
     }
 
-    private fun applyClipPoseTransition(
-        sessionId: String,
-        gunId: String,
-        clipType: WeaponAnimationClipType,
-        clipName: String,
-        targetPose: LegacyAnimationPose,
-        nowMillis: Long
-    ): LegacyAnimationPose {
-        val state = clipPoseTransitionStateBySessionId.getOrPut(sessionId) { ClipPoseTransitionState() }
 
-        if (state.lastGunId != gunId) {
-            state.lastGunId = gunId
-            state.lastClipKey = null
-            state.lastClipType = null
-            state.lastPose = null
-            state.transitionFromPose = null
-            state.transitionStartedAtMillis = -1L
-            state.transitionDurationMillis = 0L
+    private fun mapClipTypeToAnimName(clip: WeaponAnimationClipType): String? {
+        return when (clip) {
+            WeaponAnimationClipType.FIRE -> "shoot"
+            WeaponAnimationClipType.RELOAD -> "reload"
+            WeaponAnimationClipType.DRAW -> "draw"
+            WeaponAnimationClipType.PUT_AWAY -> "put_away"
+            WeaponAnimationClipType.INSPECT -> "inspect"
+            WeaponAnimationClipType.DRY_FIRE -> "dry_fire"
+            WeaponAnimationClipType.BOLT -> "bolt"
+            else -> null
         }
+    }
 
-        val clipKey = "${clipType.name}:$clipName"
-        val clipChanged = state.lastClipKey != null && state.lastClipKey != clipKey
-        if (clipChanged) {
-            state.transitionFromPose = state.lastPose ?: targetPose
-            state.transitionStartedAtMillis = nowMillis
-            state.transitionDurationMillis = resolveClipPoseTransitionDurationMillis(
-                from = state.lastClipType,
-                to = clipType
-            )
-        }
+    private fun resolveObjectAnimations(
+        path: String?,
+        useDefaultParam: String?,
+        isDefaultState: Boolean,
+        minecraft: Minecraft
+    ): List<ObjectAnimation>? {
+        if (path == null && !isDefaultState) return null
 
-        val fromPose = state.transitionFromPose
-        val duration = state.transitionDurationMillis
-        val startedAt = state.transitionStartedAtMillis
-
-        val blendedPose = if (fromPose != null && duration > 0L && startedAt >= 0L) {
-            val t = ((nowMillis - startedAt).toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-            val eased = easeOutCubic(t)
-            if (t >= 1f) {
-                state.transitionFromPose = null
-                targetPose
-            } else {
-                blendAnimationPose(fromPose, targetPose, eased)
-            }
+        val rawPath = if (isDefaultState) {
+            resolveDefaultAnimationAssetPath(path, useDefaultParam) ?: return null
         } else {
-            targetPose
+            path!!
         }
 
-        state.lastGunId = gunId
-        state.lastClipKey = clipKey
-        state.lastClipType = clipType
-        state.lastPose = blendedPose
-        return blendedPose
-    }
-
-    private fun resolveClipPoseTransitionDurationMillis(
-        from: WeaponAnimationClipType?,
-        to: WeaponAnimationClipType
-    ): Long {
-        // TACZ 上游的 transitionTimeS 通常很短（0.08~0.15s），这里用保守默认值。
-        if (from == null || from == to) {
-            return 0L
-        }
-        if (from == WeaponAnimationClipType.RELOAD || to == WeaponAnimationClipType.RELOAD) {
-            return 130L
-        }
-        if (from == WeaponAnimationClipType.FIRE || to == WeaponAnimationClipType.FIRE) {
-            return 100L
-        }
-        return 90L
-    }
-
-    private fun blendAnimationPose(from: LegacyAnimationPose, to: LegacyAnimationPose, t: Float): LegacyAnimationPose {
-        if (t <= 0f) {
-            return from
-        }
-        if (t >= 1f) {
-            return to
-        }
-
-        val merged = linkedMapOf<String, LegacyBoneTransform>()
-        val keys = linkedSetOf<String>()
-        keys.addAll(from.boneTransformsByName.keys)
-        keys.addAll(to.boneTransformsByName.keys)
-
-        keys.forEach { name ->
-            val a = from.boneTransformsByName[name]
-            val b = to.boneTransformsByName[name]
-            when {
-                a == null && b == null -> Unit
-                a == null -> merged[name] = requireNotNull(b)
-                b == null -> merged[name] = requireNotNull(a)
-                else -> merged[name] = LegacyBoneTransform(
-                    positionOffset = lerp(a.positionOffset, b.positionOffset, t),
-                    rotationOffset = lerp(a.rotationOffset, b.rotationOffset, t)
-                )
-            }
-        }
-
-        return LegacyAnimationPose(merged)
-    }
-
-    private fun dispatchAnimationSoundEffects(
-        sessionId: String,
-        gunId: String,
-        clipType: WeaponAnimationClipType,
-        clip: LegacyAnimationClip,
-        display: GunDisplayDefinition,
-        elapsedMillis: Long,
-        progress: Float,
-        player: AbstractClientPlayer
-    ) {
-        if (clip.soundEffects.isEmpty() && display.drawSoundId == null && display.putAwaySoundId == null) {
-            return
-        }
-        val nowMillis = System.currentTimeMillis()
-
-        val currentSampleSeconds = resolveSampleTimeSeconds(
-            clip = clip,
-            progress = progress,
-            elapsedMillis = elapsedMillis
-        )
-
-        val state = animationSoundStateBySessionId.getOrPut(sessionId) {
-            AnimationSoundPlaybackState(
-                lastGunId = gunId,
-                lastClipName = clip.name,
-                lastSampleSeconds = null,
-                lastPlayedSoundId = null,
-                lastPlayedAtMillis = -1L,
-                lastPlayedClipName = null,
-                lastPlayedReplayKey = null
-            )
-        }
-
-        val clipChanged = state.lastGunId != gunId || state.lastClipName != clip.name
-        if (clipChanged) {
-            state.lastGunId = gunId
-            state.lastClipName = clip.name
-            state.lastSampleSeconds = null
-
-            when (clipType) {
-                WeaponAnimationClipType.DRAW -> display.drawSoundId?.let {
-                    playAnimationSound(
-                        soundId = it,
-                        volume = 1f,
-                        pitch = 1f,
-                        player = player,
-                        display = display,
-                        state = state,
-                        nowMillis = nowMillis,
-                        currentClipName = clip.name,
-                        keyframeTimeSeconds = null
-                    )
-                }
-
-                WeaponAnimationClipType.PUT_AWAY -> display.putAwaySoundId?.let {
-                    playAnimationSound(
-                        soundId = it,
-                        volume = 1f,
-                        pitch = 1f,
-                        player = player,
-                        display = display,
-                        state = state,
-                        nowMillis = nowMillis,
-                        currentClipName = clip.name,
-                        keyframeTimeSeconds = null
-                    )
-                }
-
-                else -> Unit
-            }
-        }
-
-        val previousSampleSeconds = state.lastSampleSeconds
-        val wrapped = previousSampleSeconds != null && clip.loopMode == LegacyAnimationLoopMode.LOOP &&
-            currentSampleSeconds + CAMERA_EPSILON_RADIANS < previousSampleSeconds
-
-        clip.soundEffects.forEach { soundEffect ->
-            if (!shouldTriggerAnimationSound(
-                    previousSampleSeconds = previousSampleSeconds,
-                    currentSampleSeconds = currentSampleSeconds,
-                    soundTimeSeconds = soundEffect.timeSeconds,
-                    wrapped = wrapped
-                )
-            ) {
-                return@forEach
-            }
-
-            playAnimationSound(
-                soundId = soundEffect.effectId,
-                volume = soundEffect.volume,
-                pitch = soundEffect.pitch,
-                player = player,
-                display = display,
-                state = state,
-                nowMillis = nowMillis,
-                currentClipName = clip.name,
-                keyframeTimeSeconds = soundEffect.timeSeconds
-            )
-        }
-
-        state.lastSampleSeconds = currentSampleSeconds
-    }
-
-    private fun playAnimationSound(
-        soundId: String,
-        volume: Float,
-        pitch: Float,
-        player: AbstractClientPlayer,
-        display: GunDisplayDefinition?,
-        state: AnimationSoundPlaybackState,
-        nowMillis: Long,
-        currentClipName: String,
-        keyframeTimeSeconds: Float?
-    ) {
-        val resolved = resolveAnimationSoundEvent(
-            soundId = soundId,
-            displayResource = display?.displayResource,
-            animationPath = display?.animationPath
-        )
-            ?: return
-
-        val replayKey = buildAnimationSoundReplayKey(
-            soundId = resolved.soundId,
-            clipName = currentClipName,
-            keyframeTimeSeconds = keyframeTimeSeconds
-        )
-
-        if (replayKey != null && shouldSuppressAnimationSoundReplayByKey(
-                previousReplayKey = state.lastPlayedReplayKey,
-                currentReplayKey = replayKey,
-                previousPlayedAtMillis = state.lastPlayedAtMillis,
-                nowMillis = nowMillis,
-                minIntervalMillis = ANIMATION_SOUND_REPLAY_GUARD_MILLIS
-            )
-        ) {
-            return
-        }
-
-        // 优先通过 TaczSoundEngine（预解码 OpenAL 缓冲区）播放
-        if (TaczSoundEngine.isSoundLoaded(resolved.soundId)) {
-            TaczSoundEngine.playSound(
-                soundKey = resolved.soundId,
-                x = player.posX.toFloat(),
-                y = (player.posY + player.eyeHeight.toDouble()).toFloat(),
-                z = player.posZ.toFloat(),
-                volume = volume.coerceAtLeast(0f),
-                pitch = pitch.coerceIn(0.5f, 2f)
-            )
-        } else {
-            // 回退到原生 SoundHandler（仅用于非 tacz 音效）
-            val minecraft = Minecraft.getMinecraft()
-            minecraft.soundHandler.playSound(
-                PositionedSoundRecord(
-                    resolved.soundLocation,
-                    SoundCategory.PLAYERS,
-                    volume.coerceAtLeast(0f),
-                    pitch.coerceIn(0.5f, 2f),
-                    false,
-                    0,
-                    ISound.AttenuationType.LINEAR,
-                    player.posX.toFloat(),
-                    (player.posY + player.eyeHeight.toDouble()).toFloat(),
-                    player.posZ.toFloat()
-                )
-            )
-        }
-
-        state.lastPlayedSoundId = resolved.soundId
-        state.lastPlayedAtMillis = nowMillis
-        state.lastPlayedClipName = currentClipName
-        state.lastPlayedReplayKey = replayKey
-    }
-
-    private fun resolveAnimationSoundEvent(
-        soundId: String,
-        displayResource: String?,
-        animationPath: String?
-    ): ResolvedAnimationSoundEvent? {
-        val candidates = resolveAnimationSoundResourceCandidates(
-            soundId = soundId,
-            displayResource = displayResource,
-            animationPath = animationPath
-        )
-
-        // 优先查 TaczSoundEngine 预加载缓存（完全绕过 Paulscode/CodecJOrbis）
-        candidates.forEach { candidate ->
-            if (TaczSoundEngine.isSoundLoaded(candidate)) {
-                val location = parseResourceLocationOrNull(candidate) ?: return@forEach
-                return ResolvedAnimationSoundEvent(soundId = candidate, soundLocation = location)
-            }
-        }
-
-        // 回退到原生 SoundHandler（仅处理非 tacz 音效）
-        val minecraft = runCatching { Minecraft.getMinecraft() }.getOrNull() ?: return null
-        candidates.forEach { candidate ->
-            val location = parseResourceLocationOrNull(candidate) ?: return@forEach
-            if (!isAnimationSoundEventPlayable(location, minecraft)) {
-                return@forEach
-            }
-            return ResolvedAnimationSoundEvent(soundId = candidate, soundLocation = location)
-        }
-
-        return null
-    }
-
-    private fun isAnimationSoundEventPlayable(location: ResourceLocation, minecraft: Minecraft): Boolean {
-        val cacheKey = location.toString()
-
-        // TaczSoundEngine 预加载的音效直接可用
-        if (TaczSoundEngine.isSoundLoaded(cacheKey)) {
-            return true
-        }
-
-        animationSoundEventAvailabilityById[cacheKey]?.let { return it }
-
-        val soundHandler = runCatching { minecraft.soundHandler }.getOrNull()
-        if (soundHandler == null) {
-            animationSoundEventAvailabilityById[cacheKey] = false
-            return false
-        }
-
-        val available = runCatching {
-            val accessor = soundHandler.getAccessor(location) ?: return@runCatching false
-            val sampled = accessor.cloneEntry()
-            val oggLocation = sampled.soundAsOggLocation
-            minecraft.resourceManager.getResource(oggLocation).use { resource ->
-                resource.inputStream.use { input ->
-                    input.read()
-                }
-            }
-            true
-        }.getOrDefault(false)
-
-        animationSoundEventAvailabilityById[cacheKey] = available
-        return available
-    }
-
-    internal fun resolveAnimationSoundResourceCandidates(
-        soundId: String,
-        displayResource: String?,
-        animationPath: String?
-    ): List<String> {
-        val normalizedSoundId = soundId.trim().lowercase().ifBlank { return emptyList() }
-        val parsedSoundId = parseResourceLocationOrNull(normalizedSoundId) ?: return emptyList()
-        if (normalizedSoundId.contains(':')) {
-            return listOf(parsedSoundId.toString())
-        }
-
-        val namespaces = linkedSetOf<String>()
-        parseNamespaceFromResourceId(displayResource)?.let(namespaces::add)
-        parseNamespaceFromAssetPath(animationPath)?.let(namespaces::add)
-        namespaces += DEFAULT_ANIMATION_SOUND_NAMESPACE
-        namespaces += MINECRAFT_NAMESPACE
-
-        return namespaces
-            .map { namespace -> "$namespace:${parsedSoundId.path}" }
-            .filter { candidate -> parseResourceLocationOrNull(candidate) != null }
-    }
-
-    private fun parseNamespaceFromResourceId(resourceId: String?): String? {
-        val normalized = resourceId?.trim()?.lowercase()?.ifBlank { null } ?: return null
-        val delimiter = normalized.indexOf(':')
-        if (delimiter <= 0 || delimiter >= normalized.length - 1) {
-            return null
-        }
-        val namespace = normalized.substring(0, delimiter).trim()
-        val path = normalized.substring(delimiter + 1).trim().trimStart('/')
-        if (namespace.isBlank() || path.isBlank()) {
-            return null
-        }
-        return namespace
-    }
-
-    private fun parseNamespaceFromAssetPath(assetPath: String?): String? {
-        val normalized = assetPath?.trim()?.lowercase()?.ifBlank { null } ?: return null
-        if (!normalized.startsWith("assets/")) {
-            return null
-        }
-        val namespace = normalized.removePrefix("assets/").substringBefore('/').trim()
-        return namespace.ifBlank { null }
-    }
-
-    private fun parseResourceLocationOrNull(raw: String): ResourceLocation? {
-        return runCatching { ResourceLocation(raw) }.getOrNull()
-    }
-
-    internal fun shouldTriggerAnimationSound(
-        previousSampleSeconds: Float?,
-        currentSampleSeconds: Float,
-        soundTimeSeconds: Float,
-        wrapped: Boolean
-    ): Boolean {
-        val current = currentSampleSeconds.coerceAtLeast(0f)
-        val soundTime = soundTimeSeconds.coerceAtLeast(0f)
-        val previous = previousSampleSeconds
-
-        if (previous == null) {
-            return soundTime <= current + CAMERA_EPSILON_RADIANS
-        }
-
-        // 与 TACZ 的时间线触发语义对齐：
-        // - 当前帧时间有实际推进时，允许触发落在起点边界的 keyframe；
-        // - 当前帧无推进（或回退噪声在 epsilon 内）时，不重复触发。
-        if (!wrapped && current <= previous + CAMERA_EPSILON_RADIANS) {
-            return false
-        }
-
-        return if (wrapped) {
-            soundTime + CAMERA_EPSILON_RADIANS >= previous || soundTime <= current + CAMERA_EPSILON_RADIANS
-        } else {
-            soundTime + CAMERA_EPSILON_RADIANS >= previous && soundTime <= current + CAMERA_EPSILON_RADIANS
-        }
-    }
-
-    internal fun shouldSuppressAnimationSoundReplay(
-        previousSoundId: String?,
-        previousPlayedAtMillis: Long,
-        previousClipName: String?,
-        currentSoundId: String,
-        currentClipName: String,
-        nowMillis: Long,
-        minIntervalMillis: Long
-    ): Boolean {
-        val previousReplayKey = previousSoundId
-            ?.let { soundId ->
-                buildAnimationSoundReplayKey(
-                    soundId = soundId,
-                    clipName = previousClipName.orEmpty(),
-                    keyframeTimeSeconds = null
-                )
-            }
-            ?: return false
-        val currentReplayKey = buildAnimationSoundReplayKey(
-            soundId = currentSoundId,
-            clipName = currentClipName,
-            keyframeTimeSeconds = null
-        ) ?: return false
-
-        return shouldSuppressAnimationSoundReplayByKey(
-            previousReplayKey = previousReplayKey,
-            currentReplayKey = currentReplayKey,
-            previousPlayedAtMillis = previousPlayedAtMillis,
-            nowMillis = nowMillis,
-            minIntervalMillis = minIntervalMillis
-        )
-    }
-
-    internal fun buildAnimationSoundReplayKey(
-        soundId: String,
-        clipName: String,
-        keyframeTimeSeconds: Float?
-    ): String? {
-        val normalizedClip = clipName.trim().lowercase().ifBlank { return null }
-        val normalizedSound = soundId.trim().lowercase().ifBlank { return null }
-        val keyframeToken = keyframeTimeSeconds
-            ?.coerceAtLeast(0f)
-            ?.let { seconds -> ((seconds.toDouble() * MICROS_PER_SECOND_DOUBLE) + 0.5).toLong() }
-            ?.let { micros -> "kf:$micros" }
-            ?: "evt"
-        return "$normalizedClip|$normalizedSound|$keyframeToken"
-    }
-
-    internal fun shouldSuppressAnimationSoundReplayByKey(
-        previousReplayKey: String?,
-        currentReplayKey: String,
-        previousPlayedAtMillis: Long,
-        nowMillis: Long,
-        minIntervalMillis: Long
-    ): Boolean {
-        val previous = previousReplayKey?.trim()?.lowercase()?.ifBlank { null } ?: return false
-        val current = currentReplayKey.trim().lowercase().ifBlank { return false }
-        if (current != previous) {
-            return false
-        }
-        if (minIntervalMillis <= 0L || previousPlayedAtMillis < 0L || nowMillis < previousPlayedAtMillis) {
-            return false
-        }
-        return (nowMillis - previousPlayedAtMillis) < minIntervalMillis
-    }
-
-    private fun mergeAnimationPose(base: LegacyAnimationPose, overlay: LegacyAnimationPose): LegacyAnimationPose {
-        if (base.boneTransformsByName.isEmpty()) {
-            return overlay
-        }
-        if (overlay.boneTransformsByName.isEmpty()) {
-            return base
-        }
-
-        val merged = linkedMapOf<String, LegacyBoneTransform>()
-        merged.putAll(base.boneTransformsByName)
-        merged.putAll(overlay.boneTransformsByName)
-        return LegacyAnimationPose(merged)
-    }
-
-    private fun resolvePlaybackClip(
-        gunId: String,
-        display: GunDisplayDefinition,
-        animationSet: LegacyAnimationSet,
-        minecraft: Minecraft,
-        player: AbstractClientPlayer,
-        sessionId: String,
-        nowMillis: Long,
-        allowContextualFallback: Boolean
-    ): ResolvedPlaybackClip? {
-        val defaultAnimationSet = resolveDefaultAnimationSet(display, minecraft)
-        val runtimeSnapshot = WeaponRuntimeMcBridge.animationSnapshotOrNull(sessionId)
-        val runtimePlayback = resolveRuntimePlaybackClip(
-            runtimeSnapshot = runtimeSnapshot,
-            gunId = gunId,
-            display = display,
-            animationSet = animationSet
-        )
-        if (!allowContextualFallback) {
-            return runtimePlayback ?: resolveStaticIdlePlayback(display, animationSet, defaultAnimationSet)
-        }
-
-        val contextualPlayback = resolveContextualPlaybackClip(
-            gunId = gunId,
-            display = display,
-            animationSet = animationSet,
-            minecraft = minecraft,
-            player = player,
-            sessionId = sessionId,
-            nowMillis = nowMillis,
-            defaultAnimationSet = defaultAnimationSet
-        )
-        if (contextualPlayback?.clipType == WeaponAnimationClipType.PUT_AWAY) {
-            return contextualPlayback
-        }
-
-        if (shouldPreferRuntimePlaybackClip(runtimePlayback?.clipType)) {
-            return runtimePlayback
-        }
-
-        return contextualPlayback ?: runtimePlayback ?: resolveStaticIdlePlayback(display, animationSet, defaultAnimationSet)
-    }
-
-    private fun resolveStaticIdlePlayback(
-        display: GunDisplayDefinition,
-        animationSet: LegacyAnimationSet,
-        fallbackAnimationSet: LegacyAnimationSet?
-    ): ResolvedPlaybackClip? {
-        resolveClipByType(display, animationSet, WeaponAnimationClipType.IDLE, fallbackAnimationSet)?.let { (clipName, _) ->
-            return ResolvedPlaybackClip(
-                clipType = WeaponAnimationClipType.IDLE,
-                clipName = clipName,
-                progress = 0f,
-                elapsedMillis = 0L
-            )
-        }
-
-        val fallbackClip = animationSet.clipsByName.values.firstOrNull() ?: return null
-        return ResolvedPlaybackClip(
-            clipType = WeaponAnimationClipType.IDLE,
-            clipName = fallbackClip.name,
-            progress = 0f,
-            elapsedMillis = 0L
-        )
-    }
-
-    private fun resolveRuntimePlaybackClip(
-        runtimeSnapshot: com.tacz.legacy.common.infrastructure.mc.weapon.WeaponAnimationRuntimeSnapshot?,
-        gunId: String,
-        display: GunDisplayDefinition,
-        animationSet: LegacyAnimationSet
-    ): ResolvedPlaybackClip? {
-        if (runtimeSnapshot == null || runtimeSnapshot.gunId != gunId) {
-            return null
-        }
-
-        val clipName = resolveAnimationClipName(display, runtimeSnapshot.clip) ?: return null
-        val clip = findAnimationClip(animationSet, clipName) ?: return null
-        return ResolvedPlaybackClip(
-            clipType = runtimeSnapshot.clip,
-            clipName = clip.name,
-            progress = runtimeSnapshot.progress,
-            elapsedMillis = runtimeSnapshot.elapsedMillis
-        )
-    }
-
-    private fun resolveContextualPlaybackClip(
-        gunId: String,
-        display: GunDisplayDefinition,
-        animationSet: LegacyAnimationSet,
-        minecraft: Minecraft,
-        player: AbstractClientPlayer,
-        sessionId: String,
-        nowMillis: Long,
-        defaultAnimationSet: LegacyAnimationSet?
-    ): ResolvedPlaybackClip? {
-        val state = renderAnimationStateBySessionId.getOrPut(sessionId) { RenderAnimationSessionState() }
-        if (state.lastGunId != gunId) {
-            val previousGunId = state.lastGunId
-            state.lastGunId = gunId
-            state.activeLoopClipType = null
-            state.activeLoopStartedAtMillis = nowMillis
-            state.putAwayRenderGunId = null
-
-            // 收枪（put-away）：枪切换时先播放 PUT_AWAY clip，结束后再开始 DRAW。
-            val previousDisplay = previousGunId
-                ?.let { GunDisplayRuntime.registry().snapshot().findDefinition(it) }
-            val previousDefaultAnimationSet = previousDisplay
-                ?.let { resolveDefaultAnimationSet(it, minecraft) }
-            val previousAnimationSet = previousDisplay
-                ?.let { resolveAnimationSet(it, minecraft) ?: previousDefaultAnimationSet }
-            val putAwayClip = if (previousDisplay != null && previousAnimationSet != null) {
-                resolveClipByType(
-                    display = previousDisplay,
-                    animationSet = previousAnimationSet,
-                    clipType = WeaponAnimationClipType.PUT_AWAY,
-                    fallbackAnimationSet = previousDefaultAnimationSet
-                )
-            } else {
-                null
-            }
-            if (previousGunId != null && putAwayClip != null) {
-                val putDurationMillis = (putAwayClip.second.durationSeconds * 1000f).toLong().coerceAtLeast(1L)
-                state.putAwayStartedAtMillis = nowMillis
-                state.putAwayDurationMillis = putDurationMillis
-                state.drawStartedAtMillis = nowMillis + putDurationMillis
-                state.putAwayRenderGunId = previousGunId
-            } else {
-                state.putAwayStartedAtMillis = -1L
-                state.putAwayDurationMillis = -1L
-                state.drawStartedAtMillis = nowMillis
-                state.putAwayRenderGunId = null
-            }
-        }
-
-        // PUT_AWAY 播放中
-        val putAwayStartedAt = state.putAwayStartedAtMillis
-        if (putAwayStartedAt >= 0L) {
-            val elapsed = (nowMillis - putAwayStartedAt).coerceAtLeast(0L)
-            val durationMillis = state.putAwayDurationMillis.coerceAtLeast(1L)
-            val putAwayGunId = state.putAwayRenderGunId
-            if (putAwayGunId != null && elapsed < durationMillis) {
-                val putAwayDisplay = GunDisplayRuntime.registry().snapshot().findDefinition(putAwayGunId)
-                val putAwayDefaultAnimationSet = putAwayDisplay
-                    ?.let { resolveDefaultAnimationSet(it, minecraft) }
-                val putAwayAnimationSet = putAwayDisplay
-                    ?.let { resolveAnimationSet(it, minecraft) ?: putAwayDefaultAnimationSet }
-                val putAwayResolved = if (putAwayDisplay != null && putAwayAnimationSet != null) {
-                    resolveClipByType(
-                        display = putAwayDisplay,
-                        animationSet = putAwayAnimationSet,
-                        clipType = WeaponAnimationClipType.PUT_AWAY,
-                        fallbackAnimationSet = putAwayDefaultAnimationSet
-                    )
-                } else {
-                    null
-                }
-
-                if (putAwayResolved != null) {
-                    return ResolvedPlaybackClip(
-                        clipType = WeaponAnimationClipType.PUT_AWAY,
-                        clipName = putAwayResolved.first,
-                        progress = (elapsed.toFloat() / durationMillis.toFloat()).coerceIn(0f, 1f),
-                        elapsedMillis = elapsed,
-                        playbackGunId = putAwayGunId
-                    )
-                }
-            }
-            if (elapsed >= durationMillis) {
-                state.putAwayStartedAtMillis = -1L
-                state.putAwayRenderGunId = null
-            }
-        }
-
-        resolveClipByType(
-            display = display,
-            animationSet = animationSet,
-            clipType = WeaponAnimationClipType.DRAW,
-            fallbackAnimationSet = defaultAnimationSet
-        )?.let { (clipName, clip) ->
-            val drawStartedAt = state.drawStartedAtMillis
-            if (drawStartedAt >= 0L) {
-                val elapsed = (nowMillis - drawStartedAt).coerceAtLeast(0L)
-                val durationMillis = (clip.durationSeconds * 1000f).toLong().coerceAtLeast(1L)
-                if (elapsed < durationMillis) {
-                    return ResolvedPlaybackClip(
-                        clipType = WeaponAnimationClipType.DRAW,
-                        clipName = clipName,
-                        progress = (elapsed.toFloat() / durationMillis.toFloat()).coerceIn(0f, 1f),
-                        elapsedMillis = elapsed
-                    )
-                }
-            }
-            state.drawStartedAtMillis = -1L
-        }
-
-        val aimingProgress = resolveAimingProgress(
-            minecraft = minecraft,
-            player = player,
-            gunId = gunId,
-            nowMillis = nowMillis
-        )
-        val wasUsingAimLoopClip = state.activeLoopClipType == WeaponAnimationClipType.AIM
-
-        val preferredClipTypes = when {
-            shouldUseAimLoopClipWithHysteresis(
-                aimingProgress = aimingProgress,
-                wasUsingAimLoopClip = wasUsingAimLoopClip
-            ) -> listOf(
-                WeaponAnimationClipType.AIM,
-                WeaponAnimationClipType.RUN,
-                WeaponAnimationClipType.WALK,
-                WeaponAnimationClipType.IDLE
-            )
-
-            isRunningContext(minecraft, player) -> listOf(
-                WeaponAnimationClipType.RUN,
-                WeaponAnimationClipType.WALK,
-                WeaponAnimationClipType.IDLE
-            )
-
-            isWalkingContext(player) -> listOf(
-                WeaponAnimationClipType.WALK,
-                WeaponAnimationClipType.IDLE
-            )
-
-            else -> listOf(WeaponAnimationClipType.IDLE)
-        }
-
-        preferredClipTypes.forEach { clipType ->
-            val resolved = resolveContextualLoopClipByType(
-                display = display,
-                animationSet = animationSet,
-                clipType = clipType,
-                fallbackAnimationSet = defaultAnimationSet,
-                player = player,
-                aimingProgress = aimingProgress
-            )
-                ?: resolveClipByType(
-                    display = display,
-                    animationSet = animationSet,
-                    clipType = clipType,
-                    fallbackAnimationSet = defaultAnimationSet
-                )
-                ?: return@forEach
-            val (clipName, clip) = resolved
-
-            if (state.activeLoopClipType != clipType) {
-                state.activeLoopClipType = clipType
-                state.activeLoopStartedAtMillis = nowMillis
-            }
-
-            val elapsed = (nowMillis - state.activeLoopStartedAtMillis).coerceAtLeast(0L)
-            val durationMillis = (clip.durationSeconds * 1000f).toLong().coerceAtLeast(1L)
-            val progress = if (clip.loopMode == LegacyAnimationLoopMode.LOOP) {
-                ((elapsed % durationMillis).toFloat() / durationMillis.toFloat()).coerceIn(0f, 1f)
-            } else {
-                (elapsed.toFloat() / durationMillis.toFloat()).coerceIn(0f, 1f)
-            }
-
-            return ResolvedPlaybackClip(
-                clipType = clipType,
-                clipName = clipName,
-                progress = progress,
-                elapsedMillis = elapsed
-            )
-        }
-
-        return null
-    }
-
-    private fun resolveContextualLoopClipByType(
-        display: GunDisplayDefinition,
-        animationSet: LegacyAnimationSet,
-        clipType: WeaponAnimationClipType,
-        fallbackAnimationSet: LegacyAnimationSet?,
-        player: AbstractClientPlayer,
-        aimingProgress: Float
-    ): Pair<String, LegacyAnimationClip>? {
-        val preferredKeywords = when (clipType) {
-            WeaponAnimationClipType.WALK -> resolveWalkClipKeywordsByContext(
-                aimingProgress = aimingProgress,
-                moveForward = player.moveForward,
-                moveStrafing = player.moveStrafing
-            )
-
-            WeaponAnimationClipType.RUN -> resolveRunClipKeywordsByContext(
-                onGround = player.onGround
-            )
-
-            WeaponAnimationClipType.AIM -> AIM_CONTEXTUAL_CLIP_KEYWORDS
-            else -> return null
-        }
-
-        return resolveClipByPreferredKeywords(
-            display = display,
-            animationSet = animationSet,
-            preferredKeywords = preferredKeywords,
-            fallbackAnimationSet = fallbackAnimationSet
-        )
-    }
-
-    private fun resolveClipByPreferredKeywords(
-        display: GunDisplayDefinition,
-        animationSet: LegacyAnimationSet,
-        preferredKeywords: List<String>,
-        fallbackAnimationSet: LegacyAnimationSet?
-    ): Pair<String, LegacyAnimationClip>? {
-        val normalizedKeywords = preferredKeywords
-            .map(::normalizeClipToken)
-            .filter { it.isNotEmpty() }
-        if (normalizedKeywords.isEmpty()) {
-            return null
-        }
-
-        val displayClipNames = display.animationClipNames.orEmpty()
-        if (displayClipNames.isNotEmpty()) {
-            val preferredByDisplay = selectClipName(
-                clipNames = displayClipNames,
-                preferredKeywords = normalizedKeywords
-            )
-            if (preferredByDisplay != null) {
-                findAnimationClip(animationSet, preferredByDisplay)?.let { clip ->
-                    return clip.name to clip
-                }
-                fallbackAnimationSet
-                    ?.let { fallback -> findAnimationClip(fallback, preferredByDisplay) }
-                    ?.let { clip -> return clip.name to clip }
-            }
-        }
-
-        val preferredInPrimary = selectClipName(
-            clipNames = animationSet.clipsByName.keys.toList(),
-            preferredKeywords = normalizedKeywords
-        )
-        if (preferredInPrimary != null) {
-            findAnimationClip(animationSet, preferredInPrimary)?.let { clip ->
-                return clip.name to clip
-            }
-        }
-
-        fallbackAnimationSet?.let { fallback ->
-            val preferredInFallback = selectClipName(
-                clipNames = fallback.clipsByName.keys.toList(),
-                preferredKeywords = normalizedKeywords
-            )
-            if (preferredInFallback != null) {
-                findAnimationClip(fallback, preferredInFallback)?.let { clip ->
-                    return clip.name to clip
-                }
-            }
-        }
-
-        return null
-    }
-
-    internal fun resolveWalkClipKeywordsByContext(
-        aimingProgress: Float,
-        moveForward: Float,
-        moveStrafing: Float
-    ): List<String> {
-        val forward = moveForward
-        val strafe = moveStrafing
-        val absForward = kotlin.math.abs(forward)
-        val absStrafe = kotlin.math.abs(strafe)
-
-        if (aimingProgress > WALK_AIMING_PROGRESS_THRESHOLD) {
-            return listOf("walk_aiming", "walk", "move", "idle")
-        }
-
-        if (absForward >= MOVEMENT_INPUT_EPSILON && absForward >= absStrafe) {
-            return if (forward > 0f) {
-                listOf("walk_forward", "walk", "move")
-            } else {
-                listOf("walk_backward", "walk", "move")
-            }
-        }
-
-        if (absStrafe >= MOVEMENT_INPUT_EPSILON) {
-            return listOf("walk_sideway", "walk", "move")
-        }
-
-        return listOf("walk", "move", "idle")
-    }
-
-    internal fun resolveRunClipKeywordsByContext(onGround: Boolean): List<String> {
-        return if (onGround) {
-            listOf("run", "run_start", "sprint", "run_hold")
-        } else {
-            listOf("run_hold", "run", "sprint")
-        }
-    }
-
-    private fun isAimingContext(minecraft: Minecraft, player: AbstractClientPlayer): Boolean {
-        val sessionId = clientSessionId(player.uniqueID.toString())
-        val bridgedAiming = WeaponAimInputStateRegistry.resolve(sessionId)
-        val useDown = minecraft.gameSettings.keyBindUseItem.isKeyDown || Mouse.isButtonDown(1)
-        return resolveAimingIntent(
-            bridgedAiming = bridgedAiming,
-            useDown = useDown,
-            isSwinging = player.isSwingInProgress
-        )
-    }
-
-    private fun isRunningContext(minecraft: Minecraft, player: AbstractClientPlayer): Boolean {
-        if (player.isSprinting) {
-            return true
-        }
-        val sprintKeyDown = minecraft.gameSettings.keyBindSprint.isKeyDown
-        return sprintKeyDown && !player.isSneaking && isWalkingContext(player)
-    }
-
-    private fun isWalkingContext(player: AbstractClientPlayer): Boolean {
-        val movingByInput = kotlin.math.abs(player.moveForward) > 0.01f || kotlin.math.abs(player.moveStrafing) > 0.01f
-        val velocitySq = player.motionX * player.motionX + player.motionZ * player.motionZ
-        val limbSwingMoving = kotlin.math.abs(player.limbSwingAmount) > 0.01f
-        val deltaX = player.posX - player.prevPosX
-        val deltaZ = player.posZ - player.prevPosZ
-        val positionDeltaSq = deltaX * deltaX + deltaZ * deltaZ
-        return movingByInput || velocitySq > 0.0001 || limbSwingMoving || positionDeltaSq > 1.0E-6
-    }
-
-    private fun resolveClipByType(
-        display: GunDisplayDefinition,
-        animationSet: LegacyAnimationSet,
-        clipType: WeaponAnimationClipType,
-        fallbackAnimationSet: LegacyAnimationSet? = null
-    ): Pair<String, LegacyAnimationClip>? {
-        val explicitName = resolveAnimationClipName(display, clipType)
-        if (explicitName != null) {
-            findAnimationClip(animationSet, explicitName)?.let { clip ->
-                return clip.name to clip
-            }
-            fallbackAnimationSet
-                ?.let { findAnimationClip(it, explicitName) }
-                ?.let { clip -> return clip.name to clip }
-        }
-
-        resolveAnimationClipNameFromSet(animationSet, clipType)
-            ?.let { candidate ->
-                findAnimationClip(animationSet, candidate)?.let { clip ->
-                    return clip.name to clip
-                }
-            }
-
-        fallbackAnimationSet?.let { fallback ->
-            resolveAnimationClipNameFromSet(fallback, clipType)
-                ?.let { candidate ->
-                    findAnimationClip(fallback, candidate)?.let { clip ->
-                        return clip.name to clip
-                    }
-                }
-        }
-
-        return null
-    }
-
-    private fun resolveStaticBaseClip(
-        display: GunDisplayDefinition,
-        animationSet: LegacyAnimationSet,
-        fallbackAnimationSet: LegacyAnimationSet? = null
-    ): Pair<String, LegacyAnimationClip>? {
-        STATIC_BASE_CLIP_CANDIDATES.forEach { candidate ->
-            findAnimationClip(animationSet, candidate)?.let { clip ->
-                return clip.name to clip
-            }
-        }
-
-        resolveStaticBaseClipNameFromSet(animationSet)
-            ?.let { candidate ->
-                findAnimationClip(animationSet, candidate)?.let { clip ->
-                    return clip.name to clip
-                }
-            }
-
-        fallbackAnimationSet?.let { fallback ->
-            STATIC_BASE_CLIP_CANDIDATES.forEach { candidate ->
-                findAnimationClip(fallback, candidate)?.let { clip ->
-                    return clip.name to clip
-                }
-            }
-
-            resolveStaticBaseClipNameFromSet(fallback)
-                ?.let { candidate ->
-                    findAnimationClip(fallback, candidate)?.let { clip ->
-                        return clip.name to clip
-                    }
-                }
-        }
-
-        // 防御：某些枪包会把 static_idle 解析进 animationClipNames，
-        // 但实际 clip 仅存在于 default animation（fallback set）中。
-        val displayClipNames = display.animationClipNames.orEmpty()
-        if (displayClipNames.isNotEmpty()) {
-            val preferredByDisplay = selectClipName(
-                clipNames = displayClipNames,
-                preferredKeywords = STATIC_BASE_CLIP_CANDIDATES
-            )
-            if (preferredByDisplay != null) {
-                findAnimationClip(animationSet, preferredByDisplay)?.let { clip ->
-                    return clip.name to clip
-                }
-                fallbackAnimationSet
-                    ?.let { fallback -> findAnimationClip(fallback, preferredByDisplay) }
-                    ?.let { clip -> return clip.name to clip }
-            }
-        }
-
-        return null
-    }
-
-    private fun resolveStaticBaseClipNameFromSet(animationSet: LegacyAnimationSet): String? {
-        return resolveStaticBaseClipNameFromCandidates(animationSet.clipsByName.keys.toList())
-    }
-
-    internal fun resolveStaticBaseClipNameFromCandidates(clipNames: List<String>): String? {
-        if (clipNames.isEmpty()) {
-            return null
-        }
-        return selectClipName(
-            clipNames = clipNames,
-            preferredKeywords = STATIC_BASE_CLIP_CANDIDATES
-        )
-    }
-
-    private fun resolveAnimationClipNameFromSet(
-        animationSet: LegacyAnimationSet,
-        clipType: WeaponAnimationClipType
-    ): String? {
-        val clipNames = animationSet.clipsByName.keys.toList()
-        if (clipNames.isEmpty()) {
-            return null
-        }
-        return resolveAnimationClipNameByCandidates(clipNames, clipType)
-    }
-
-    private fun findAnimationClip(animationSet: LegacyAnimationSet, clipName: String): LegacyAnimationClip? {
-        return animationSet.clipsByName[clipName]
-            ?: animationSet.normalizedNamesToClipNames[normalizeClipToken(clipName)]
-                ?.let(animationSet.clipsByName::get)
-    }
-
-    internal fun resolveAnimationClipName(display: GunDisplayDefinition, clipType: WeaponAnimationClipType): String? {
-        val explicit = when (clipType) {
-            WeaponAnimationClipType.IDLE -> display.animationIdleClipName
-            WeaponAnimationClipType.FIRE -> display.animationFireClipName
-            WeaponAnimationClipType.RELOAD -> display.animationReloadClipName
-            WeaponAnimationClipType.INSPECT -> display.animationInspectClipName
-            WeaponAnimationClipType.DRY_FIRE -> display.animationDryFireClipName
-            WeaponAnimationClipType.DRAW -> display.animationDrawClipName
-            WeaponAnimationClipType.PUT_AWAY -> display.animationPutAwayClipName
-            WeaponAnimationClipType.WALK -> display.animationWalkClipName
-            WeaponAnimationClipType.RUN -> display.animationRunClipName
-            WeaponAnimationClipType.AIM -> display.animationAimClipName
-            WeaponAnimationClipType.BOLT -> display.animationBoltClipName
-        }?.trim()?.ifBlank { null }
-
-        if (explicit != null) {
-            return explicit
-        }
-
-        val clipNames = display.animationClipNames.orEmpty()
-        if (clipNames.isEmpty()) {
-            return null
-        }
-
-        return resolveAnimationClipNameByCandidates(clipNames, clipType)
-    }
-
-    private fun resolveAnimationClipNameByCandidates(
-        clipNames: List<String>,
-        clipType: WeaponAnimationClipType
-    ): String? {
-
-        return when (clipType) {
-            WeaponAnimationClipType.IDLE -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("idle")
-            )
-
-            WeaponAnimationClipType.FIRE -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("shoot", "fire", "shot", "recoil"),
-                excludedKeywords = setOf("dry", "empty")
-            )
-
-            WeaponAnimationClipType.RELOAD -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("reload_tactical", "reload_empty", "reload")
-            )
-
-            WeaponAnimationClipType.INSPECT -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("inspect")
-            )
-
-            WeaponAnimationClipType.DRY_FIRE -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("dry_fire", "dry", "empty_click", "no_ammo")
-            )
-
-            WeaponAnimationClipType.DRAW -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("draw", "equip", "deploy", "pull_out")
-            )
-
-            WeaponAnimationClipType.PUT_AWAY -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("put_away", "putaway", "holster", "withdraw")
-            )
-
-            WeaponAnimationClipType.WALK -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("walk_aiming", "walk_forward", "walk_sideway", "walk_backward", "walk", "move")
-            )
-
-            WeaponAnimationClipType.RUN -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("run_hold", "run", "sprint", "run_start")
-            )
-
-            WeaponAnimationClipType.AIM -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("aim", "ads", "sight", "aiming"),
-                excludedKeywords = setOf("fire", "shoot", "reload")
-            )
-
-            WeaponAnimationClipType.BOLT -> selectClipName(
-                clipNames,
-                preferredKeywords = listOf("bolt", "blot", "pull_bolt", "charge")
-            )
-        }
-    }
-
-    private fun selectClipName(
-        clipNames: List<String>,
-        preferredKeywords: List<String>,
-        excludedKeywords: Set<String> = emptySet()
-    ): String? {
-        val normalizedExcluded = excludedKeywords.map(::normalizeClipToken).toSet()
-        val normalized = clipNames.map { name ->
-            name to normalizeClipToken(name)
-        }
-
-        preferredKeywords.forEach { keywordRaw ->
-            val keyword = normalizeClipToken(keywordRaw)
-
-            normalized.firstOrNull { (_, token) ->
-                (token == keyword || token.endsWith("_$keyword")) && normalizedExcluded.none { token.contains(it) }
-            }?.first?.let { return it }
-
-            normalized.firstOrNull { (_, token) ->
-                token.contains(keyword) && normalizedExcluded.none { token.contains(it) }
-            }?.first?.let { return it }
-        }
-
-        return null
-    }
-
-    private fun normalizeClipToken(raw: String): String =
-        raw.trim()
-            .lowercase()
-            .map { ch -> if (ch.isLetterOrDigit()) ch else '_' }
-            .joinToString(separator = "")
-            .replace("__+".toRegex(), "_")
-            .trim('_')
-
-    private fun resolveAnimationSet(display: GunDisplayDefinition, minecraft: Minecraft): LegacyAnimationSet? {
         val resource = TaczTextureResourceResolver.resolveExisting(
-            rawPath = display.animationPath,
-            sourceId = display.sourceId,
-            minecraft = minecraft
-        ) ?: return null
-
-        val cacheKey = resource.toString()
-        animationCache[cacheKey]?.let { return it }
-
-        val json = runCatching {
-            minecraft.resourceManager.getResource(resource).use { res ->
-                String(res.inputStream.readBytes(), StandardCharsets.UTF_8)
-            }
-        }.getOrNull() ?: return null
-
-        val parsed = parseAnimationSet(json) ?: return null
-        animationCache[cacheKey] = parsed
-        return parsed
-    }
-
-    private fun resolveDefaultAnimationSet(display: GunDisplayDefinition, minecraft: Minecraft): LegacyAnimationSet? {
-        val fallbackPath = resolveDefaultAnimationAssetPath(
-            defaultAnimationPath = display.defaultAnimationPath,
-            useDefaultAnimation = display.useDefaultAnimation
-        ) ?: return null
-        val resource = TaczTextureResourceResolver.resolveExisting(
-            rawPath = fallbackPath,
+            rawPath = rawPath,
             sourceId = null,
             minecraft = minecraft
         ) ?: return null
 
         val cacheKey = resource.toString()
-        animationCache[cacheKey]?.let { return it }
+        objectAnimationCache[cacheKey]?.let { return it }
 
         val json = runCatching {
             minecraft.resourceManager.getResource(resource).use { res ->
-                String(res.inputStream.readBytes(), StandardCharsets.UTF_8)
+                String(res.inputStream.readBytes(), java.nio.charset.StandardCharsets.UTF_8)
             }
         }.getOrNull() ?: return null
 
-        val parsed = parseAnimationSet(json) ?: return null
-        animationCache[cacheKey] = parsed
-        return parsed
+        val bedrockFile = runCatching { com.google.gson.Gson().fromJson(json, BedrockAnimationFile::class.java) }.getOrNull() ?: return null
+        val list = Animations.createAnimationFromBedrock(bedrockFile)
+        objectAnimationCache[cacheKey] = list
+        return list
     }
-
     internal fun resolveDefaultAnimationAssetPath(
         defaultAnimationPath: String?,
         useDefaultAnimation: String?
@@ -3445,333 +2270,6 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         return "assets/tacz/animations/$fileName"
     }
 
-    private fun parseAnimationSet(json: String): LegacyAnimationSet? {
-        val root = runCatching { JsonParser().parse(json) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
-            ?: return null
-        val animations = root.get("animations")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
-
-        val clipsByName = linkedMapOf<String, LegacyAnimationClip>()
-        val normalizedNamesToClipNames = linkedMapOf<String, String>()
-        animations.entrySet().forEach { entry ->
-            val clipName = entry.key.trim().takeIf { it.isNotEmpty() } ?: return@forEach
-            val clipObj = entry.value.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
-            val bonesObj = clipObj.get("bones")?.takeIf { it.isJsonObject }?.asJsonObject
-            val soundEffects = parseAnimationSoundEffects(clipObj.get("sound_effects"))
-
-            var maxKeyTime = 0f
-            val boneTracks = linkedMapOf<String, LegacyBoneAnimationTrack>()
-            bonesObj?.entrySet()?.forEach { boneEntry ->
-                val boneName = boneEntry.key.trim().takeIf { it.isNotEmpty() } ?: return@forEach
-                val boneObj = boneEntry.value.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
-
-                val rotationKeyframes = parseAnimationKeyframes(boneObj.get("rotation"))
-                val positionKeyframes = parseAnimationKeyframes(boneObj.get("position"))
-                if (rotationKeyframes.isEmpty() && positionKeyframes.isEmpty()) {
-                    return@forEach
-                }
-
-                val rotationMax = rotationKeyframes.lastOrNull()?.timeSeconds ?: 0f
-                val positionMax = positionKeyframes.lastOrNull()?.timeSeconds ?: 0f
-                val trackMax = if (rotationMax > positionMax) rotationMax else positionMax
-                if (trackMax > maxKeyTime) {
-                    maxKeyTime = trackMax
-                }
-
-                boneTracks[boneName] = LegacyBoneAnimationTrack(
-                    rotationKeyframes = rotationKeyframes,
-                    positionKeyframes = positionKeyframes
-                )
-            }
-
-            val declaredDuration = clipObj.readFloat("animation_length")?.takeIf { it > 0f }
-            val durationSeconds = (declaredDuration ?: maxKeyTime).coerceAtLeast(0f)
-            val loopMode = parseLoopMode(clipObj.get("loop"))
-
-            clipsByName[clipName] = LegacyAnimationClip(
-                name = clipName,
-                durationSeconds = durationSeconds,
-                loopMode = loopMode,
-                boneTracksByName = boneTracks,
-                soundEffects = soundEffects
-            )
-            normalizedNamesToClipNames[normalizeClipToken(clipName)] = clipName
-        }
-
-        if (clipsByName.isEmpty()) {
-            return null
-        }
-
-        return LegacyAnimationSet(
-            clipsByName = clipsByName,
-            normalizedNamesToClipNames = normalizedNamesToClipNames
-        )
-    }
-
-    private fun parseLoopMode(loopElement: JsonElement?): LegacyAnimationLoopMode {
-        if (loopElement == null || loopElement.isJsonNull) {
-            return LegacyAnimationLoopMode.NONE
-        }
-
-        if (loopElement.isJsonPrimitive) {
-            val primitive = loopElement.asJsonPrimitive
-            if (primitive.isBoolean) {
-                return if (primitive.asBoolean) LegacyAnimationLoopMode.LOOP else LegacyAnimationLoopMode.NONE
-            }
-            if (primitive.isString) {
-                val normalized = primitive.asString.trim().lowercase()
-                if (normalized.contains("hold")) {
-                    return LegacyAnimationLoopMode.HOLD_ON_LAST_FRAME
-                }
-                if (normalized == "loop" || normalized == "true") {
-                    return LegacyAnimationLoopMode.LOOP
-                }
-            }
-        }
-
-        return LegacyAnimationLoopMode.NONE
-    }
-
-    private fun parseAnimationKeyframes(element: JsonElement?): List<LegacyAnimationKeyframe> {
-        if (element == null || element.isJsonNull) {
-            return emptyList()
-        }
-
-        if (element.isJsonArray) {
-            val vec = parseVec3(element.asJsonArray) ?: return emptyList()
-            return listOf(LegacyAnimationKeyframe(timeSeconds = 0f, value = vec))
-        }
-
-        if (!element.isJsonObject) {
-            return emptyList()
-        }
-
-        val keyframesByTime = linkedMapOf<Float, LegacyVec3>()
-        element.asJsonObject.entrySet().forEach { entry ->
-            val timeSeconds = entry.key.toFloatOrNull() ?: return@forEach
-            val value = parseAnimationKeyframeValue(entry.value) ?: return@forEach
-            keyframesByTime[timeSeconds] = value
-        }
-
-        return keyframesByTime
-            .entries
-            .sortedBy { it.key }
-            .map { LegacyAnimationKeyframe(timeSeconds = it.key, value = it.value) }
-    }
-
-    private fun parseAnimationSoundEffects(element: JsonElement?): List<LegacyAnimationSoundEffect> {
-        val soundObject = element?.takeIf { it.isJsonObject }?.asJsonObject ?: return emptyList()
-        val soundEffects = mutableListOf<LegacyAnimationSoundEffect>()
-
-        soundObject.entrySet().forEach { entry ->
-            val timeSeconds = entry.key.toFloatOrNull()?.coerceAtLeast(0f) ?: return@forEach
-            parseAnimationSoundEffectPayload(entry.value).forEach { payload ->
-                soundEffects += LegacyAnimationSoundEffect(
-                    timeSeconds = timeSeconds,
-                    effectId = payload.effectId,
-                    volume = payload.volume,
-                    pitch = payload.pitch
-                )
-            }
-        }
-
-        return soundEffects.sortedBy { it.timeSeconds }
-    }
-
-    internal fun parseAnimationSoundEffectPayload(element: JsonElement?): List<ParsedAnimationSoundEffectPayload> {
-        if (element == null || element.isJsonNull) {
-            return emptyList()
-        }
-
-        if (element.isJsonPrimitive) {
-            val primitive = element.asJsonPrimitive
-            if (primitive.isString) {
-                val effectId = primitive.asString.trim().ifBlank { return emptyList() }
-                return listOf(
-                    ParsedAnimationSoundEffectPayload(
-                        effectId = effectId,
-                        volume = 1f,
-                        pitch = 1f
-                    )
-                )
-            }
-            return emptyList()
-        }
-
-        if (element.isJsonArray) {
-            val out = mutableListOf<ParsedAnimationSoundEffectPayload>()
-            element.asJsonArray.forEach { item ->
-                out += parseAnimationSoundEffectPayload(item)
-            }
-            return out
-        }
-
-        if (!element.isJsonObject) {
-            return emptyList()
-        }
-
-        val value = element.asJsonObject
-        val effectId = value.get("effect")
-            ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
-            ?.asString
-            ?.trim()
-            ?.ifBlank { null }
-
-        if (effectId != null) {
-            val volume = value.get("volume")
-                ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
-                ?.asFloat
-                ?.coerceAtLeast(0f)
-                ?: 1f
-            val pitch = value.get("pitch")
-                ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
-                ?.asFloat
-                ?.coerceIn(0.5f, 2f)
-                ?: 1f
-            return listOf(
-                ParsedAnimationSoundEffectPayload(
-                    effectId = effectId,
-                    volume = volume,
-                    pitch = pitch
-                )
-            )
-        }
-
-        val effectsElement = value.get("effects")
-        if (effectsElement != null) {
-            return parseAnimationSoundEffectPayload(effectsElement)
-        }
-
-        return emptyList()
-    }
-
-    private fun parseAnimationKeyframeValue(element: JsonElement): LegacyVec3? {
-        if (element.isJsonArray) {
-            return parseVec3(element.asJsonArray)
-        }
-
-        if (!element.isJsonObject) {
-            return null
-        }
-
-        val obj = element.asJsonObject
-        return obj.get("post")
-            ?.takeIf { it.isJsonArray }
-            ?.asJsonArray
-            ?.let(::parseVec3)
-            ?: obj.get("vector")
-                ?.takeIf { it.isJsonArray }
-                ?.asJsonArray
-                ?.let(::parseVec3)
-            ?: obj.get("pre")
-                ?.takeIf { it.isJsonArray }
-                ?.asJsonArray
-                ?.let(::parseVec3)
-    }
-
-    private fun sampleAnimationPose(
-        clip: LegacyAnimationClip,
-        progress: Float,
-        elapsedMillis: Long
-    ): LegacyAnimationPose {
-        val sampleTime = resolveSampleTimeSeconds(clip, progress, elapsedMillis)
-        val transformsByName = linkedMapOf<String, LegacyBoneTransform>()
-
-        clip.boneTracksByName.forEach { (boneName, track) ->
-            val sampledRotation = sampleAnimationTrack(track.rotationKeyframes, sampleTime) ?: LegacyVec3.ZERO
-            val sampledRawPosition = sampleAnimationTrack(track.positionKeyframes, sampleTime) ?: LegacyVec3.ZERO
-            val sampledPosition = convertAnimationPosition(sampledRawPosition)
-
-            if (sampledRotation != LegacyVec3.ZERO || sampledPosition != LegacyVec3.ZERO) {
-                transformsByName[boneName] = LegacyBoneTransform(
-                    positionOffset = sampledPosition,
-                    rotationOffset = sampledRotation
-                )
-            }
-        }
-
-        return LegacyAnimationPose(transformsByName)
-    }
-
-    private fun resolveSampleTimeSeconds(
-        clip: LegacyAnimationClip,
-        progress: Float,
-        elapsedMillis: Long
-    ): Float {
-        val duration = clip.durationSeconds
-        if (duration <= 0f) {
-            return 0f
-        }
-
-        return when (clip.loopMode) {
-            LegacyAnimationLoopMode.LOOP -> {
-                val durationMillis = (duration * 1000f).toLong().coerceAtLeast(1L)
-                val loopMillis = elapsedMillis.coerceAtLeast(0L) % durationMillis
-                (loopMillis.toFloat() / 1000f).coerceIn(0f, duration)
-            }
-
-            LegacyAnimationLoopMode.HOLD_ON_LAST_FRAME,
-            LegacyAnimationLoopMode.NONE -> {
-                (duration * progress.coerceIn(0f, 1f)).coerceIn(0f, duration)
-            }
-        }
-    }
-
-    private fun sampleAnimationTrack(
-        keyframes: List<LegacyAnimationKeyframe>,
-        timeSeconds: Float
-    ): LegacyVec3? {
-        if (keyframes.isEmpty()) {
-            return null
-        }
-        if (keyframes.size == 1) {
-            return keyframes[0].value
-        }
-
-        if (timeSeconds <= keyframes[0].timeSeconds) {
-            return keyframes[0].value
-        }
-        if (timeSeconds >= keyframes[keyframes.lastIndex].timeSeconds) {
-            return keyframes[keyframes.lastIndex].value
-        }
-
-        for (index in 1 until keyframes.size) {
-            val previous = keyframes[index - 1]
-            val next = keyframes[index]
-            if (timeSeconds > next.timeSeconds) {
-                continue
-            }
-
-            val delta = next.timeSeconds - previous.timeSeconds
-            if (delta <= 0f) {
-                return next.value
-            }
-
-            val t = ((timeSeconds - previous.timeSeconds) / delta).coerceIn(0f, 1f)
-            return lerp(previous.value, next.value, t)
-        }
-
-        return keyframes[keyframes.lastIndex].value
-    }
-
-    private fun lerp(from: LegacyVec3, to: LegacyVec3, t: Float): LegacyVec3 {
-        return LegacyVec3(
-            x = from.x + (to.x - from.x) * t,
-            y = from.y + (to.y - from.y) * t,
-            z = from.z + (to.z - from.z) * t
-        )
-    }
-
-    private fun lerp(from: Float, to: Float, t: Float): Float {
-        return from + (to - from) * t
-    }
-
-    private fun convertAnimationPosition(raw: LegacyVec3): LegacyVec3 {
-        return LegacyVec3(
-            x = raw.x,
-            y = -raw.y,
-            z = raw.z
-        )
-    }
 
     private fun parseGeoModel(json: String): LegacyGeoModel? {
         val root = runCatching { JsonParser().parse(json) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
@@ -4029,83 +2527,6 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
 
     private val DEFAULT_GUN_TEXTURE: ResourceLocation = ResourceLocation("tacz", "textures/hud/heat_bar.png")
 
-    private data class LegacyGeoModel(
-        val textureWidth: Int,
-        val textureHeight: Int,
-        val bonesByName: Map<String, LegacyGeoBone>,
-        val childrenByParent: Map<String, List<String>>,
-        val rootBones: List<String>
-    )
-
-    private data class LegacyGeoBone(
-        val name: String,
-        val parent: String?,
-        val rawPivot: LegacyVec3,
-        val pivot: LegacyVec3,
-        val rotation: LegacyVec3,
-        val cubes: List<LegacyGeoCube>
-    )
-
-    private data class LegacyGeoCube(
-        val origin: LegacyVec3,
-        val size: LegacyVec3,
-        val pivot: LegacyVec3?,
-        val rotation: LegacyVec3?,
-        val defaultUv: LegacyVec2?,
-        val faces: Map<LegacyCubeFace, LegacyFaceUv>,
-        val inflate: Float,
-        val mirror: Boolean
-    )
-
-    private data class RawGeoBone(
-        val name: String,
-        val parent: String?,
-        val pivot: LegacyVec3,
-        val rotation: LegacyVec3,
-        val cubes: List<RawGeoCube>
-    )
-
-    private data class RawGeoCube(
-        val origin: LegacyVec3,
-        val size: LegacyVec3,
-        val pivot: LegacyVec3?,
-        val rotation: LegacyVec3?,
-        val defaultUv: LegacyVec2?,
-        val faces: Map<LegacyCubeFace, LegacyFaceUv>,
-        val inflate: Float,
-        val mirror: Boolean
-    )
-
-    private data class LegacyFaceUv(
-        val u: Float,
-        val v: Float,
-        val uvSizeU: Float,
-        val uvSizeV: Float
-    )
-
-    private data class LegacyVec3(
-        val x: Float,
-        val y: Float,
-        val z: Float
-    ) {
-        operator fun plus(other: LegacyVec3): LegacyVec3 {
-            return LegacyVec3(
-                x = x + other.x,
-                y = y + other.y,
-                z = z + other.z
-            )
-        }
-
-        companion object {
-            val ZERO: LegacyVec3 = LegacyVec3(0f, 0f, 0f)
-        }
-    }
-
-    private data class LegacyVec2(
-        val x: Float,
-        val y: Float
-    )
-
     private data class LegacyAnimationSet(
         val clipsByName: Map<String, LegacyAnimationClip>,
         val normalizedNamesToClipNames: Map<String, String>
@@ -4142,9 +2563,6 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         val value: LegacyVec3
     )
 
-    private data class LegacyAnimationPose(
-        val boneTransformsByName: Map<String, LegacyBoneTransform>
-    )
 
     private data class ResolvedAnimationPose(
         val pose: LegacyAnimationPose,
@@ -4211,7 +2629,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         var lastGunId: String? = null,
         var lastClipKey: String? = null,
         var lastClipType: WeaponAnimationClipType? = null,
-        var lastPose: LegacyAnimationPose? = null,
+        var lastPose: com.tacz.legacy.client.render.item.LegacyAnimationPose? = null,
         var transitionFromPose: LegacyAnimationPose? = null,
         var transitionStartedAtMillis: Long = -1L,
         var transitionDurationMillis: Long = 0L
@@ -4287,62 +2705,13 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         }
     }
 
-    private data class LegacyBoneTransform(
-        val positionOffset: LegacyVec3,
-        val rotationOffset: LegacyVec3
-    )
-
-    private data class LegacyQuaternion(
-        val x: Float,
-        val y: Float,
-        val z: Float,
-        val w: Float
-    ) {
-        fun normalized(): LegacyQuaternion {
-            val lengthSquared = x * x + y * y + z * z + w * w
-            if (lengthSquared <= CAMERA_EPSILON_RADIANS) {
-                return IDENTITY
-            }
-            val invLength = 1f / kotlin.math.sqrt(lengthSquared)
-            return LegacyQuaternion(
-                x = x * invLength,
-                y = y * invLength,
-                z = z * invLength,
-                w = w * invLength
-            )
-        }
-
-        companion object {
-            val IDENTITY: LegacyQuaternion = LegacyQuaternion(0f, 0f, 0f, 1f)
-        }
-    }
-
-    private data class LegacyRigidTransform(
-        val translation: LegacyVec3,
-        val rotation: LegacyQuaternion
-    ) {
-        companion object {
-            val IDENTITY: LegacyRigidTransform = LegacyRigidTransform(
-                translation = LegacyVec3.ZERO,
-                rotation = LegacyQuaternion.IDENTITY
-            )
-        }
-    }
-
-    private data class LegacyAxisAngle(
-        val axisX: Float,
-        val axisY: Float,
-        val axisZ: Float,
-        val angleDegrees: Float
-    )
-
     private enum class LegacyAnimationLoopMode {
         NONE,
         LOOP,
         HOLD_ON_LAST_FRAME
     }
 
-    private data class LegacyBoneVisibilityPolicy(
+    internal data class LegacyBoneVisibilityPolicy(
         val strictAttachmentFiltering: Boolean,
         val hasScope: Boolean,
         val hasMuzzle: Boolean,
@@ -4973,14 +3342,6 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         }
     }
 
-    private enum class LegacyCubeFace(val key: String) {
-        NORTH("north"),
-        SOUTH("south"),
-        WEST("west"),
-        EAST("east"),
-        UP("up"),
-        DOWN("down")
-    }
 
     private const val MODEL_UNIT: Float = 16f
     private const val MAX_BONE_DEPTH: Int = 64
@@ -5071,4 +3432,34 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
     )
     private const val WALK_AIMING_PROGRESS_THRESHOLD: Float = 0.5f
     private const val MOVEMENT_INPUT_EPSILON: Float = 0.01f
+
+
+    private fun lerp(fraction: Float, start: Float, end: Float): Float {
+        return start + fraction * (end - start)
+    }
+
+    private fun parseVec2(data: Any?): FloatArray? {
+        if (data is List<*>) {
+            if (data.size >= 2) {
+                val array = FloatArray(2)
+                for (i in 0..1) {
+                    val p = data[i]
+                    array[i] = if (p is Number) p.toFloat() else 0f
+                }
+                return array
+            }
+        } else if (data is FloatArray && data.size >= 2) {
+            return data
+        } else if (data is DoubleArray && data.size >= 2) {
+            return floatArrayOf(data[0].toFloat(), data[1].toFloat())
+        }
+        return null
+    }
+    private fun lerp(vec1: LegacyVec3, vec2: LegacyVec3, fraction: Float): LegacyVec3 {
+        return LegacyVec3(
+            lerp(fraction, vec1.x, vec2.x),
+            lerp(fraction, vec1.y, vec2.y),
+            lerp(fraction, vec1.z, vec2.z)
+        )
+    }
 }

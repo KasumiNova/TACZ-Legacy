@@ -105,4 +105,41 @@ public object WeaponRuntimeMcBridge {
     public fun serverSessionIdForPlayer(playerUuid: String): String =
         "player:${playerUuid.trim()}"
 
+
+    public fun playGunDisplaySound(
+        gunId: String,
+        effectName: String,
+        x: Float,
+        y: Float,
+        z: Float,
+        volume: Float,
+        pitch: Float
+    ) {
+        val display = com.tacz.legacy.common.application.gunpack.GunDisplayRuntime.registry().snapshot().findDefinition(gunId) ?: return
+
+        val soundId = when (effectName.lowercase()) {
+            "shoot" -> display.shootSoundId
+            "shoot_3p" -> display.shootThirdPersonSoundId
+            "draw" -> display.drawSoundId
+            "put_away" -> display.putAwaySoundId
+            "dry_fire" -> display.dryFireSoundId
+            "inspect" -> display.inspectSoundId
+            "inspect_empty" -> display.inspectEmptySoundId
+            "reload_empty" -> display.reloadEmptySoundId
+            "reload_tactical" -> display.reloadTacticalSoundId
+            else -> effectName
+        }
+
+        if (soundId.isNullOrBlank()) return
+
+        com.tacz.legacy.client.sound.ClientSoundPlaybackBridge.tryPlayRawSound(
+            soundId = soundId,
+            x = x,
+            y = y,
+            z = z,
+            volume = volume,
+            pitch = pitch,
+            category = "PLAYERS"
+        )
+    }
 }

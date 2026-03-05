@@ -320,6 +320,9 @@ public object WeaponAttachmentConflictRules {
 }
 
 public object WeaponItemStackRuntimeData {
+    internal fun writeStringDummy(stack: net.minecraft.item.ItemStack, colorRgb: Int) {}
+    internal fun writeStringDummy(stack: net.minecraft.item.ItemStack, slot: WeaponAttachmentSlot, colorRgb: Int) {}
+
 
     public const val TAG_GUN_CURRENT_AMMO_COUNT: String = "GunCurrentAmmoCount"
     public const val TAG_GUN_AMMO_RESERVE_COUNT: String = "GunAmmoReserveCount"
