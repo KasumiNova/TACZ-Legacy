@@ -3,6 +3,8 @@ package com.tacz.legacy.client.render.item
 import com.tacz.legacy.api.client.animation.Animations
 import com.tacz.legacy.api.client.animation.ObjectAnimation
 import com.tacz.legacy.client.animation.GunAnimationControllerSession
+import com.tacz.legacy.client.animation.LegacyGunDisplayInstance
+import com.tacz.legacy.client.animation.LegacyGunDisplayInstanceRegistry
 import com.tacz.legacy.client.animation.SessionTrack
 import com.tacz.legacy.client.animation.SessionTrackPlayMode
 import com.tacz.legacy.client.resource.pojo.animation.bedrock.BedrockAnimationFile
@@ -20,6 +22,7 @@ import com.tacz.legacy.client.gui.WeaponGunsmithImmersiveRuntime
 import com.tacz.legacy.client.render.texture.TaczTextureResourceResolver
 import com.tacz.legacy.client.sound.TaczSoundEngine
 import com.tacz.legacy.client.input.WeaponAimInputStateRegistry
+import com.tacz.legacy.client.animation.statemachine.GunAnimationStateContext
 import com.tacz.legacy.common.application.gunpack.GunDisplayDefinition
 import com.tacz.legacy.common.application.gunpack.GunDisplayRuntime
 import com.tacz.legacy.common.application.gunpack.GunPackRuntime
@@ -2110,81 +2113,59 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         val player = minecraft.player as? AbstractClientPlayer ?: return null
         val sessionId = clientSessionId(player.uniqueID.toString())
 
-        val cacheKey = "${sessionId}_${gunId}"
-        var session = animationSessions[cacheKey]
-
-        if (session == null) {
-            val defaults = resolveObjectAnimations(display.defaultAnimationPath, display.useDefaultAnimation, true, minecraft) ?: emptyList()
-            val primary = resolveObjectAnimations(display.animationPath, null, false, minecraft) ?: emptyList()
-
-            val combined = mutableListOf<ObjectAnimation>()
-            combined.addAll(defaults)
-            combined.addAll(primary)
-
-            if (combined.isEmpty()) return null
-            val allBones = combined.flatMap { it.channels.keys }.toSet()
-            session = GunAnimationControllerSession(combined, allBones)
-            animationSessions[cacheKey] = session
-        }
-
-        val runtimeSnapshot = WeaponRuntimeMcBridge.animationSnapshotOrNull(sessionId)
-
         val state = renderAnimationStateBySessionId.getOrPut(sessionId) { RenderAnimationSessionState() }
         var actualRenderGunId = gunId
         var actualDisplay = display
 
+        // ---- put-away 切枪逻辑 ----
         if (allowContextualFallback && state.lastGunId != gunId) {
             val prev = state.lastGunId
             state.lastGunId = gunId
             state.putAwayRenderGunId = prev
             state.putAwayStartedAtMillis = System.currentTimeMillis()
 
+            // 旧枪：exit 状态机（put_away trigger 放在 exitStateMachine 内）
             if (prev != null) {
-                val prevDisplay = GunDisplayRuntime.registry().snapshot().findDefinition(prev)
-                val putAwayAnimName = prevDisplay?.animationPutAwayClipName ?: "put_away"
-                val prevSession = animationSessions["${sessionId}_${prev}"]
-                prevSession?.let {
-                    it.syncFromSnapshots(listOf(
-                        SessionTrack(
-                            trackKey = "0:0",
-                            animationName = putAwayAnimName,
-                            playMode = SessionTrackPlayMode.PLAY_ONCE_STOP,
-                            progress = 0f
-                        )
-                    ))
-                }
+                val prevInstance = LegacyGunDisplayInstanceRegistry.getExisting(sessionId, prev)
+                prevInstance?.exitStateMachine(400L)
             }
         }
 
         val now = System.currentTimeMillis()
         if (state.putAwayRenderGunId != null && now - state.putAwayStartedAtMillis < 500L) {
-             actualRenderGunId = state.putAwayRenderGunId!!
-             actualDisplay = GunDisplayRuntime.registry().snapshot().findDefinition(actualRenderGunId) ?: display
+            actualRenderGunId = state.putAwayRenderGunId!!
+            actualDisplay = GunDisplayRuntime.registry().snapshot().findDefinition(actualRenderGunId) ?: display
         } else {
-             state.putAwayRenderGunId = null
+            state.putAwayRenderGunId = null
         }
 
-        val activeSession = if (actualRenderGunId == gunId) session else (animationSessions["${sessionId}_${actualRenderGunId}"] ?: session)
+        // ---- 获取或创建 display instance ----
+        val defaults = resolveObjectAnimations(actualDisplay.defaultAnimationPath, actualDisplay.useDefaultAnimation, true, minecraft) ?: emptyList()
+        val primary = resolveObjectAnimations(actualDisplay.animationPath, null, false, minecraft) ?: emptyList()
+        if (defaults.isEmpty() && primary.isEmpty()) return null
 
-        if (actualRenderGunId == gunId && runtimeSnapshot != null && runtimeSnapshot.gunId.trim().lowercase().substringAfter(":") == gunId.lowercase()) {
-            val tracks = mutableListOf<SessionTrack>()
-            val idleName = actualDisplay.animationIdleClipName ?: "static_idle"
-            tracks.add(SessionTrack("0:0", idleName, SessionTrackPlayMode.LOOP, 0f))
-            
-            val clipName = resolveClipAnimationName(runtimeSnapshot.clip, actualDisplay)
-            
-            val clipStartBaseMillis = runtimeSnapshot.clipStartedAtMillis
-            val clipRestarted = state.lastClipType == runtimeSnapshot.clip && (kotlin.math.abs(clipStartBaseMillis - state.lastClipStartBaseMillis) > 50L)
-            state.lastClipType = runtimeSnapshot.clip
-            state.lastClipStartBaseMillis = clipStartBaseMillis
-            val forceRestarts = if (clipRestarted && clipName != null) setOf(clipName) else emptySet()
-            
-            if (clipName != null) {
-                tracks.add(SessionTrack("1:0", clipName, SessionTrackPlayMode.PLAY_ONCE_HOLD, runtimeSnapshot.progress))
+        val instance = LegacyGunDisplayInstanceRegistry.getOrCreate(
+            sessionId = sessionId,
+            gunId = actualRenderGunId,
+            display = actualDisplay,
+            primaryAnimations = primary,
+            defaultAnimations = defaults
+        ) ?: return null
+
+        // ---- 初始化状态机（首次或切枪后）----
+        if (!instance.animationStateMachine.isInitialized || instance.needReInit()) {
+            val context = GunAnimationStateContext()
+            updateGunAnimationContext(context, player, actualRenderGunId, actualDisplay, minecraft)
+            context.setStateMachineParam(instance.stateMachineParam)
+            instance.initStateMachine(context)
+        } else {
+            // 更新上下文
+            instance.animationStateMachine.processContextIfExist { context ->
+                updateGunAnimationContext(context, player, actualRenderGunId, actualDisplay, minecraft)
             }
-            activeSession.syncFromSnapshots(tracks, forceRestartNames = forceRestarts)
         }
 
+        // ---- 更新状态机 + 收集骨骼姿态 ----
         val prevRenderGunId = SoundPlayManager.currentRenderGunId
         if (enableSoundDispatch) {
             SoundPlayManager.currentRenderGunId = actualRenderGunId
@@ -2192,7 +2173,7 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
             SoundPlayManager.currentRenderGunId = ""
         }
 
-        val pose = activeSession.updateAndCollectPose()
+        val pose = instance.updateAndCollectPose(enableSound = enableSoundDispatch)
 
         SoundPlayManager.currentRenderGunId = prevRenderGunId
 
@@ -2203,18 +2184,47 @@ public object LegacyGunItemStackRenderer : TileEntityItemStackRenderer() {
         )
     }
 
+    /**
+     * 对标 TACZ 上游 GunItemRendererWrapper.updateContext()：
+     * 将当前游戏状态写入 [GunAnimationStateContext]。
+     * 因为 TACZ-Legacy 没有 IGun/IGunOperator 接口，用 setter 注入。
+     */
+    private fun updateGunAnimationContext(
+        context: GunAnimationStateContext,
+        player: AbstractClientPlayer,
+        gunId: String,
+        display: GunDisplayDefinition,
+        minecraft: Minecraft
+    ) {
+        val partialTicks = minecraft.renderPartialTicks
+        context.setPartialTicks(partialTicks)
+        val heldStack = player.heldItemMainhand
+        context.setCurrentGunItem(heldStack)
 
-    private fun resolveClipAnimationName(clip: WeaponAnimationClipType, display: GunDisplayDefinition): String? {
-        return when (clip) {
-            WeaponAnimationClipType.FIRE -> display.animationFireClipName ?: "shoot"
-            WeaponAnimationClipType.RELOAD -> display.animationReloadClipName ?: "reload"
-            WeaponAnimationClipType.DRAW -> display.animationDrawClipName ?: "draw"
-            WeaponAnimationClipType.PUT_AWAY -> display.animationPutAwayClipName ?: "put_away"
-            WeaponAnimationClipType.INSPECT -> display.animationInspectClipName ?: "inspect"
-            WeaponAnimationClipType.DRY_FIRE -> display.animationDryFireClipName ?: "dry_fire"
-            WeaponAnimationClipType.BOLT -> display.animationBoltClipName ?: "bolt"
-            else -> null
-        }
+        val sessionId = clientSessionId(player.uniqueID.toString())
+
+        // fire mode — 从 WeaponSpec
+        val weaponDef = com.tacz.legacy.common.application.weapon.WeaponRuntime.registry().snapshot().findDefinition(gunId)
+        val fireModeOrdinal = weaponDef?.spec?.fireMode?.ordinal ?: 0
+        context.setFireMode(fireModeOrdinal)
+
+        // aiming — 从客户端 Aim 输入状态
+        val isAiming = WeaponAimInputStateRegistry.resolve(sessionId) == true
+        context.setIsAiming(isAiming)
+        // aimingProgress: 简化为 0 或 1（后续可改为平滑插值）
+        context.setAimingProgress(if (isAiming) 1f else 0f)
+
+        // max ammo
+        context.setMaxAmmoCount(weaponDef?.spec?.magazineSize ?: 30)
+
+        // shoot interval (ms) — 从 RPM 换算
+        val rpm = weaponDef?.spec?.roundsPerMinute ?: 600
+        context.setShootIntervalMs(60_000L / rpm.toLong().coerceAtLeast(1L))
+
+        // gun data — 用于 boltType 判断
+        val gunPackSnapshot = com.tacz.legacy.common.application.gunpack.GunPackRuntime.registry().snapshot()
+        val gunData = gunPackSnapshot.findByGunId(gunId)
+        context.setGunData(gunData)
     }
 
     private fun resolveObjectAnimations(

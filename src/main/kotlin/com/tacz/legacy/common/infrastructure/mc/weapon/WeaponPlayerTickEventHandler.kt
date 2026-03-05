@@ -16,6 +16,8 @@ import com.tacz.legacy.common.application.weapon.WeaponLuaAnimationStateMachineR
 import com.tacz.legacy.common.application.weapon.WeaponLuaScriptRuntime
 import com.tacz.legacy.common.application.weapon.WeaponTickContext
 import com.tacz.legacy.common.application.weapon.WeaponRuntime
+import com.tacz.legacy.client.animation.AnimationTriggerBridge
+import com.tacz.legacy.client.animation.LegacyGunDisplayInstanceRegistry
 import com.tacz.legacy.client.input.WeaponAimInputStateRegistry
 import com.tacz.legacy.common.infrastructure.mc.network.LegacyNetworkHandler
 import com.tacz.legacy.common.infrastructure.mc.network.PacketWeaponInput
@@ -90,6 +92,17 @@ public class WeaponPlayerTickEventHandler(
         syncHeldGunStackFromBehaviorResult(player, gunId, tickResult)
         enforceCreativeInfiniteAmmoIfNeeded(player, sessionId, gunId)
 
+        // 客户端：将行为信号转发给上游动画状态机
+        if (isRemote) {
+            dispatchAnimationStateMachineTriggers(
+                player = player,
+                sessionId = sessionId,
+                gunId = gunId,
+                displayDefinition = behaviorContext.displayDefinition,
+                behaviorResult = tickResult
+            )
+        }
+
         val animationRuntimePath = resolveAnimationRuntimePath(
             worldIsRemote = player.world.isRemote,
             sessionId = sessionId,
@@ -123,6 +136,7 @@ public class WeaponPlayerTickEventHandler(
         orchestrator.onSessionEnd(sessionId)
         WeaponAnimationRuntimeRegistry.removeSession(sessionId)
         WeaponLuaAnimationStateMachineRuntime.clearSession(sessionId)
+        LegacyGunDisplayInstanceRegistry.clearSession(sessionId)
 
         if (!isRemote && player is EntityPlayerMP) {
             LegacyNetworkHandler.sendWeaponSessionClearToClient(player, sessionId)
@@ -586,6 +600,32 @@ public class WeaponPlayerTickEventHandler(
     private fun resolveClipLength(clipLengths: Map<String, Long>, clipName: String?): Long? {
         val normalized = clipName?.trim()?.ifBlank { null } ?: return null
         return clipLengths[normalized]?.takeIf { it > 0L }
+    }
+
+    /**
+     * 客户端侧：将行为引擎产出的信号转换为上游动画状态机 trigger，
+     * 并追加 walk/run/idle 移动触发。
+     *
+     * 对标 TACZ 上游的 TickAnimationEvent + LocalPlayerShoot/LocalPlayerReload 等。
+     */
+    private fun dispatchAnimationStateMachineTriggers(
+        player: EntityPlayer,
+        sessionId: String,
+        gunId: String?,
+        displayDefinition: GunDisplayDefinition?,
+        behaviorResult: WeaponBehaviorResult?
+    ) {
+        val normalizedGunId = gunId?.trim()?.lowercase()?.ifBlank { null } ?: return
+        if (displayDefinition == null) return
+
+        val instance = LegacyGunDisplayInstanceRegistry.getExisting(sessionId, normalizedGunId)
+            ?: return
+
+        // 行为信号 → trigger（shoot / reload / inspect 等）
+        AnimationTriggerBridge.dispatchBehaviorSignals(instance, behaviorResult)
+
+        // 移动状态 → walk / run / idle
+        AnimationTriggerBridge.dispatchMovementTrigger(instance, player)
     }
 
     private fun updateAnimationRuntime(
