@@ -1,5 +1,6 @@
 package com.tacz.legacy.common.entity.shooter
 
+import com.tacz.legacy.api.event.GunMeleeEvent
 import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.common.network.TACZNetworkHandler
 import com.tacz.legacy.common.network.message.event.ServerMessageMelee
@@ -8,6 +9,8 @@ import net.minecraft.entity.EntityLivingBase
 import net.minecraft.util.DamageSource
 import net.minecraft.util.math.AxisAlignedBB
 import net.minecraft.util.math.Vec3d
+import net.minecraftforge.common.MinecraftForge
+import net.minecraftforge.fml.relauncher.Side
 
 /**
  * 服务端近战逻辑。与上游 TACZ LivingEntityMelee 行为一致。
@@ -37,11 +40,15 @@ public class LivingEntityMelee(
         // 换弹中不可近战
         if (data.reloadStateType.isReloading()) return
 
+        // 发布服务端 Forge 事件
+        val meleeEvent = GunMeleeEvent(shooter, currentGunItem, Side.SERVER)
+        if (MinecraftForge.EVENT_BUS.post(meleeEvent)) return
+
         data.meleeTimestamp = System.currentTimeMillis()
         data.meleePrepTickCount = 0
 
         // 广播近战开始
-        TACZNetworkHandler.sendToTrackingEntity(ServerMessageMelee(shooter.entityId), shooter)
+        TACZNetworkHandler.sendToTrackingEntity(ServerMessageMelee(shooter.entityId, currentGunItem), shooter)
 
         // 如果有 prep time，延迟伤害；否则立即执行
         val defaultMeleeData = meleeData.defaultMeleeData

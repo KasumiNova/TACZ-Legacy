@@ -6,6 +6,7 @@ import com.tacz.legacy.TACZLegacy
 import com.tacz.legacy.common.block.entity.GunSmithTableTileEntity
 import com.tacz.legacy.common.block.entity.StatueTileEntity
 import com.tacz.legacy.common.block.entity.TargetTileEntity
+import com.tacz.legacy.common.gui.LegacyGuiIds
 import com.tacz.legacy.common.registry.LegacyCreativeTabs
 import com.tacz.legacy.common.registry.LegacySoundEvents
 import net.minecraft.block.BlockContainer
@@ -22,7 +23,6 @@ import net.minecraft.util.EnumHand
 import net.minecraft.util.ResourceLocation
 import net.minecraft.util.SoundCategory
 import net.minecraft.util.math.BlockPos
-import net.minecraft.util.text.TextComponentString
 import net.minecraft.world.World
 import net.minecraftforge.registries.IForgeRegistry
 import java.util.Random
@@ -86,8 +86,10 @@ internal class LegacyGunSmithTableBlock(path: String) : LegacyBaseBlock(path, Ma
         if (worldIn.isRemote) {
             return true
         }
-        val tile = worldIn.getTileEntity(pos) as? GunSmithTableTileEntity ?: return true
-        playerIn.sendMessage(TextComponentString("${tile.blockId} ready for TACZ foundation registration."))
+        if (worldIn.getTileEntity(pos) !is GunSmithTableTileEntity) {
+            return true
+        }
+        playerIn.openGui(TACZLegacy, LegacyGuiIds.GUN_SMITH_TABLE, worldIn, pos.x, pos.y, pos.z)
         worldIn.playSound(null, pos, SoundEvents.BLOCK_WOOD_PLACE, SoundCategory.BLOCKS, 1.0f, 1.0f)
         return true
     }

@@ -217,6 +217,7 @@ tooltip.tacz.ammo_box.usage.creative.1=Pick up the box in the inventory and righ
 tooltip.tacz.ammo_box.usage.creative.2=Then an unlimited amount of ammo of that type can then be supplied
 tooltip.tacz.ammo_box.usage.deposit=- Deposit Ammo: Pick up the box in the inventory and right-click on the ammo
 tooltip.tacz.ammo_box.usage.remove=- Remove Ammo: Pick up the box in the inventory and right-click on the empty slot
+tooltip.tacz.gun.pack=Pack: 
 tooltip.tacz.attachment.ads.decrease=- ADS Time
 tooltip.tacz.attachment.ads.increase=+ ADS Time
 tooltip.tacz.attachment.aim_inaccuracy.decrease=- Aim Inaccuracy

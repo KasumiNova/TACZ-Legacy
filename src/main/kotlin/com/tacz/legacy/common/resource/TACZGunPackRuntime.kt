@@ -113,6 +113,49 @@ internal data class TACZBlockIndexDefinition(
     val sort: Int = 0,
 )
 
+internal data class TACZRecipeFilterDefinition(
+    @SerializedName("whitelist")
+    val whitelist: List<String> = emptyList(),
+    @SerializedName("blacklist")
+    val blacklist: List<String> = emptyList(),
+) {
+    fun allows(recipeId: ResourceLocation): Boolean {
+        val value = recipeId.toString()
+        val allowed = whitelist.isEmpty() || whitelist.any { pattern -> matchesRecipe(pattern, value) }
+        if (!allowed) {
+            return false
+        }
+        return blacklist.none { pattern -> matchesRecipe(pattern, value) }
+    }
+
+    private fun matchesRecipe(pattern: String, recipeId: String): Boolean {
+        val trimmed = pattern.trim()
+        if (trimmed.isEmpty()) {
+            return false
+        }
+        if (trimmed.startsWith("^") || trimmed.endsWith("$")) {
+            return runCatching { Pattern.matches(trimmed, recipeId) }.getOrDefault(false)
+        }
+        return trimmed.equals(recipeId, ignoreCase = true)
+    }
+}
+
+internal data class TACZWorkbenchTabIconDefinition(
+    @SerializedName("item")
+    val itemId: ResourceLocation? = null,
+    @SerializedName("nbt")
+    val nbt: JsonObject? = null,
+)
+
+internal data class TACZWorkbenchTabDefinition(
+    @SerializedName("id")
+    val id: ResourceLocation = ResourceLocation(TACZLegacy.MOD_ID, "misc"),
+    @SerializedName("name")
+    val name: String? = null,
+    @SerializedName("icon")
+    val icon: TACZWorkbenchTabIconDefinition? = null,
+)
+
 internal data class TACZGunDataDefinition(
     val raw: JsonObject,
     val ammoId: ResourceLocation?,
@@ -131,9 +174,18 @@ internal data class TACZAttachmentDataDefinition(
     val modifiers: Map<String, JsonProperty<*>>,
 )
 
-internal data class TACZBlockDataDefinition(val raw: JsonObject)
+internal data class TACZBlockDataDefinition(
+    val raw: JsonObject,
+    val filter: ResourceLocation,
+    val tabs: List<TACZWorkbenchTabDefinition>,
+)
 
 internal data class TACZDisplayDefinition(
+    val id: ResourceLocation,
+    val raw: JsonObject,
+)
+
+internal data class TACZRecipeDefinition(
     val id: ResourceLocation,
     val raw: JsonObject,
 )
@@ -181,8 +233,15 @@ internal data class TACZRuntimeSnapshot(
     val attachments: Map<ResourceLocation, TACZLoadedAttachment>,
     val ammos: Map<ResourceLocation, TACZAmmoIndexDefinition>,
     val blocks: Map<ResourceLocation, TACZLoadedBlock>,
+    val recipes: Map<ResourceLocation, TACZRecipeDefinition>,
+    val recipeFilters: Map<ResourceLocation, TACZRecipeFilterDefinition>,
+    val attachmentTags: Map<ResourceLocation, Set<String>>,
+    val allowAttachmentTags: Map<ResourceLocation, Set<String>>,
     val gunDisplays: Map<ResourceLocation, TACZDisplayDefinition>,
+    val ammoDisplays: Map<ResourceLocation, TACZDisplayDefinition>,
     val attachmentDisplays: Map<ResourceLocation, TACZDisplayDefinition>,
+    val blockDisplays: Map<ResourceLocation, TACZDisplayDefinition>,
+    val translations: Map<String, Map<String, String>>,
     val issues: List<String>,
 ) {
     private val gunIdsByItemType: Map<String, List<ResourceLocation>> by lazy {
@@ -204,8 +263,15 @@ internal data class TACZRuntimeSnapshot(
             attachments = emptyMap(),
             ammos = emptyMap(),
             blocks = emptyMap(),
+            recipes = emptyMap(),
+            recipeFilters = emptyMap(),
+            attachmentTags = emptyMap(),
+            allowAttachmentTags = emptyMap(),
             gunDisplays = emptyMap(),
+            ammoDisplays = emptyMap(),
             attachmentDisplays = emptyMap(),
+            blockDisplays = emptyMap(),
+            translations = emptyMap(),
             issues = emptyList(),
         )
     }
@@ -249,8 +315,14 @@ internal object TACZGunPackScanner {
     private val AMMO_INDEX_PATTERN: Pattern = Pattern.compile("^data/([a-z0-9_.-]+)/index/ammo/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
     private val BLOCK_INDEX_PATTERN: Pattern = Pattern.compile("^data/([a-z0-9_.-]+)/index/blocks/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
     private val BLOCK_DATA_PATTERN: Pattern = Pattern.compile("^data/([a-z0-9_.-]+)/data/blocks/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
+    private val RECIPE_PATTERN: Pattern = Pattern.compile("^data/([a-z0-9_.-]+)/recipes/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
+    private val RECIPE_FILTER_PATTERN: Pattern = Pattern.compile("^data/([a-z0-9_.-]+)/recipe_filters/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
+    private val ATTACHMENT_TAG_PATTERN: Pattern = Pattern.compile("^data/([a-z0-9_.-]+)/tacz_tags/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
     private val GUN_DISPLAY_PATTERN: Pattern = Pattern.compile("^assets/([a-z0-9_.-]+)/display/guns/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
+    private val AMMO_DISPLAY_PATTERN: Pattern = Pattern.compile("^assets/([a-z0-9_.-]+)/display/ammo/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
     private val ATTACHMENT_DISPLAY_PATTERN: Pattern = Pattern.compile("^assets/([a-z0-9_.-]+)/display/attachments/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
+    private val BLOCK_DISPLAY_PATTERN: Pattern = Pattern.compile("^assets/([a-z0-9_.-]+)/display/blocks/([\\w/.-]+)\\.json$", Pattern.CASE_INSENSITIVE)
+    private val LANG_PATTERN: Pattern = Pattern.compile("^assets/([a-z0-9_.-]+)/lang/([\\w-]+)\\.(json|lang)$", Pattern.CASE_INSENSITIVE)
 
     internal fun scan(packsRoot: File): TACZRuntimeSnapshot {
         if (!packsRoot.exists()) {
@@ -265,8 +337,15 @@ internal object TACZGunPackScanner {
         val rawAmmoIndices = LinkedHashMap<ResourceLocation, TACZAmmoIndexDefinition>()
         val rawBlockIndices = LinkedHashMap<ResourceLocation, TACZBlockIndexDefinition>()
         val rawBlockData = LinkedHashMap<ResourceLocation, TACZBlockDataDefinition>()
+        val rawRecipes = LinkedHashMap<ResourceLocation, TACZRecipeDefinition>()
+        val rawRecipeFilters = LinkedHashMap<ResourceLocation, TACZRecipeFilterDefinition>()
+        val rawAttachmentTags = LinkedHashMap<ResourceLocation, LinkedHashSet<String>>()
+        val rawAllowAttachmentTags = LinkedHashMap<ResourceLocation, LinkedHashSet<String>>()
         val rawGunDisplays = LinkedHashMap<ResourceLocation, TACZDisplayDefinition>()
+        val rawAmmoDisplays = LinkedHashMap<ResourceLocation, TACZDisplayDefinition>()
         val rawAttachmentDisplays = LinkedHashMap<ResourceLocation, TACZDisplayDefinition>()
+        val rawBlockDisplays = LinkedHashMap<ResourceLocation, TACZDisplayDefinition>()
+        val rawTranslations = LinkedHashMap<String, LinkedHashMap<String, String>>()
         val issues = mutableListOf<String>()
 
         val entries = packsRoot.listFiles()?.sortedBy { it.name.lowercase(Locale.ROOT) }.orEmpty()
@@ -285,8 +364,15 @@ internal object TACZGunPackScanner {
                         rawAmmoIndices = rawAmmoIndices,
                         rawBlockIndices = rawBlockIndices,
                         rawBlockData = rawBlockData,
+                        rawRecipes = rawRecipes,
+                        rawRecipeFilters = rawRecipeFilters,
+                        rawAttachmentTags = rawAttachmentTags,
+                        rawAllowAttachmentTags = rawAllowAttachmentTags,
                         rawGunDisplays = rawGunDisplays,
+                        rawAmmoDisplays = rawAmmoDisplays,
                         rawAttachmentDisplays = rawAttachmentDisplays,
+                        rawBlockDisplays = rawBlockDisplays,
+                        rawTranslations = rawTranslations,
                         issues = issues,
                     )
                 }
@@ -304,8 +390,15 @@ internal object TACZGunPackScanner {
                             rawAmmoIndices = rawAmmoIndices,
                             rawBlockIndices = rawBlockIndices,
                             rawBlockData = rawBlockData,
+                            rawRecipes = rawRecipes,
+                            rawRecipeFilters = rawRecipeFilters,
+                            rawAttachmentTags = rawAttachmentTags,
+                            rawAllowAttachmentTags = rawAllowAttachmentTags,
                             rawGunDisplays = rawGunDisplays,
+                            rawAmmoDisplays = rawAmmoDisplays,
                             rawAttachmentDisplays = rawAttachmentDisplays,
+                            rawBlockDisplays = rawBlockDisplays,
+                            rawTranslations = rawTranslations,
                             issues = issues,
                         )
                     }
@@ -367,8 +460,15 @@ internal object TACZGunPackScanner {
             attachments = attachments.toMap(),
             ammos = rawAmmoIndices.toMap(),
             blocks = blocks.toMap(),
+            recipes = rawRecipes.toMap(),
+            recipeFilters = rawRecipeFilters.toMap(),
+            attachmentTags = rawAttachmentTags.mapValues { (_, values) -> values.toSet() },
+            allowAttachmentTags = rawAllowAttachmentTags.mapValues { (_, values) -> values.toSet() },
             gunDisplays = rawGunDisplays.toMap(),
+            ammoDisplays = rawAmmoDisplays.toMap(),
             attachmentDisplays = rawAttachmentDisplays.toMap(),
+            blockDisplays = rawBlockDisplays.toMap(),
+            translations = rawTranslations.mapValues { (_, values) -> values.toMap() },
             issues = issues.toList(),
         )
     }
@@ -385,8 +485,15 @@ internal object TACZGunPackScanner {
         rawAmmoIndices: MutableMap<ResourceLocation, TACZAmmoIndexDefinition>,
         rawBlockIndices: MutableMap<ResourceLocation, TACZBlockIndexDefinition>,
         rawBlockData: MutableMap<ResourceLocation, TACZBlockDataDefinition>,
+        rawRecipes: MutableMap<ResourceLocation, TACZRecipeDefinition>,
+        rawRecipeFilters: MutableMap<ResourceLocation, TACZRecipeFilterDefinition>,
+        rawAttachmentTags: MutableMap<ResourceLocation, LinkedHashSet<String>>,
+        rawAllowAttachmentTags: MutableMap<ResourceLocation, LinkedHashSet<String>>,
         rawGunDisplays: MutableMap<ResourceLocation, TACZDisplayDefinition>,
+        rawAmmoDisplays: MutableMap<ResourceLocation, TACZDisplayDefinition>,
         rawAttachmentDisplays: MutableMap<ResourceLocation, TACZDisplayDefinition>,
+        rawBlockDisplays: MutableMap<ResourceLocation, TACZDisplayDefinition>,
+        rawTranslations: MutableMap<String, LinkedHashMap<String, String>>,
         issues: MutableList<String>,
     ): Unit {
         val packMetaText = source.readText("gunpack.meta.json") ?: return
@@ -454,15 +561,52 @@ internal object TACZGunPackScanner {
                     }
                     BLOCK_DATA_PATTERN.matcher(entryName).matches() -> {
                         val id = resourceIdFrom(entryName, BLOCK_DATA_PATTERN)
-                        rawBlockData[id] = TACZBlockDataDefinition(TACZJson.parseObject(requireNotNull(source.readText(entryName))))
+                        rawBlockData[id] = parseBlockData(TACZJson.parseObject(requireNotNull(source.readText(entryName))))
+                    }
+                    RECIPE_PATTERN.matcher(entryName).matches() -> {
+                        val id = resourceIdFrom(entryName, RECIPE_PATTERN)
+                        rawRecipes[id] = TACZRecipeDefinition(id, TACZJson.parseObject(requireNotNull(source.readText(entryName))))
+                    }
+                    RECIPE_FILTER_PATTERN.matcher(entryName).matches() -> {
+                        val id = resourceIdFrom(entryName, RECIPE_FILTER_PATTERN)
+                        rawRecipeFilters[id] = TACZJson.fromJson(requireNotNull(source.readText(entryName)), TACZRecipeFilterDefinition::class.java)
+                    }
+                    ATTACHMENT_TAG_PATTERN.matcher(entryName).matches() -> {
+                        val id = resourceIdFrom(entryName, ATTACHMENT_TAG_PATTERN)
+                        val values = parseTagEntries(requireNotNull(source.readText(entryName)))
+                        val normalizedPath = id.path.removePrefix(ATTACHMENT_TAG_ROOT_PREFIX)
+                        if (normalizedPath.startsWith(ALLOW_ATTACHMENT_PREFIX) && normalizedPath.length > ALLOW_ATTACHMENT_PREFIX.length) {
+                            val gunId = ResourceLocation(id.namespace, normalizedPath.substring(ALLOW_ATTACHMENT_PREFIX.length))
+                            mergeTagEntries(rawAllowAttachmentTags, gunId, values)
+                        } else {
+                            mergeTagEntries(rawAttachmentTags, ResourceLocation(id.namespace, normalizedPath), values)
+                        }
                     }
                     GUN_DISPLAY_PATTERN.matcher(entryName).matches() -> {
                         val id = resourceIdFrom(entryName, GUN_DISPLAY_PATTERN)
                         rawGunDisplays[id] = TACZDisplayDefinition(id, TACZJson.parseObject(requireNotNull(source.readText(entryName))))
                     }
+                    AMMO_DISPLAY_PATTERN.matcher(entryName).matches() -> {
+                        val id = resourceIdFrom(entryName, AMMO_DISPLAY_PATTERN)
+                        rawAmmoDisplays[id] = TACZDisplayDefinition(id, TACZJson.parseObject(requireNotNull(source.readText(entryName))))
+                    }
                     ATTACHMENT_DISPLAY_PATTERN.matcher(entryName).matches() -> {
                         val id = resourceIdFrom(entryName, ATTACHMENT_DISPLAY_PATTERN)
                         rawAttachmentDisplays[id] = TACZDisplayDefinition(id, TACZJson.parseObject(requireNotNull(source.readText(entryName))))
+                    }
+                    BLOCK_DISPLAY_PATTERN.matcher(entryName).matches() -> {
+                        val id = resourceIdFrom(entryName, BLOCK_DISPLAY_PATTERN)
+                        rawBlockDisplays[id] = TACZDisplayDefinition(id, TACZJson.parseObject(requireNotNull(source.readText(entryName))))
+                    }
+                    LANG_PATTERN.matcher(entryName).matches() -> {
+                        val matcher = LANG_PATTERN.matcher(entryName)
+                        matcher.find()
+                        val locale = normalizeLocaleName(matcher.group(2))
+                        val extension = matcher.group(3)
+                        val translations = parseTranslations(requireNotNull(source.readText(entryName)), extension)
+                        if (translations.isNotEmpty()) {
+                            rawTranslations.computeIfAbsent(locale) { LinkedHashMap() }.putAll(translations)
+                        }
                     }
                 }
             } catch (throwable: Throwable) {
@@ -484,11 +628,76 @@ internal object TACZGunPackScanner {
         allowAttachmentTypes = jsonObject.stringArray("allow_attachment_types"),
     )
 
+    private fun parseBlockData(jsonObject: JsonObject): TACZBlockDataDefinition {
+        val tabs = jsonObject.getAsJsonArray("tabs")
+            ?.mapNotNull { element -> runCatching { TACZJson.GSON.fromJson(element, TACZWorkbenchTabDefinition::class.java) }.getOrNull() }
+            ?: emptyList()
+        return TACZBlockDataDefinition(
+            raw = jsonObject,
+            filter = jsonObject.resourceLocation("filter") ?: ResourceLocation(TACZLegacy.MOD_ID, "default"),
+            tabs = tabs,
+        )
+    }
+
+    private fun parseTagEntries(json: String): List<String> {
+        val element = TACZJson.parseElement(json)
+        if (!element.isJsonArray) {
+            return emptyList()
+        }
+        return element.asJsonArray.mapNotNull { entry ->
+            runCatching { entry.asString.trim() }.getOrNull()?.takeIf(String::isNotBlank)
+        }
+    }
+
+    private fun parseTranslations(json: String, extension: String): Map<String, String> {
+        return if (extension.equals("json", ignoreCase = true)) {
+            val objectNode = TACZJson.parseObject(json)
+            val result = LinkedHashMap<String, String>()
+            objectNode.entrySet().forEach { entry ->
+                runCatching { entry.value.asString }.getOrNull()?.let { translated ->
+                    result[entry.key] = translated
+                }
+            }
+            result
+        } else {
+            parseLangFile(json)
+        }
+    }
+
+    private fun parseLangFile(content: String): Map<String, String> {
+        val result = LinkedHashMap<String, String>()
+        content.lineSequence().forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                return@forEach
+            }
+            val separator = trimmed.indexOf('=')
+            if (separator <= 0) {
+                return@forEach
+            }
+            val key = trimmed.substring(0, separator).trim()
+            val value = trimmed.substring(separator + 1).trim()
+            if (key.isNotEmpty()) {
+                result[key] = value
+            }
+        }
+        return result
+    }
+
+    private fun mergeTagEntries(target: MutableMap<ResourceLocation, LinkedHashSet<String>>, id: ResourceLocation, values: List<String>): Unit {
+        if (values.isEmpty()) {
+            return
+        }
+        target.computeIfAbsent(id) { linkedSetOf() }.addAll(values)
+    }
+
     private fun resourceIdFrom(entryName: String, pattern: Pattern): ResourceLocation {
         val matcher = pattern.matcher(entryName)
         require(matcher.find()) { "Path did not match expected pattern: $entryName" }
         return ResourceLocation(matcher.group(1), matcher.group(2))
     }
+
+    private fun normalizeLocaleName(value: String): String = value.lowercase(Locale.ROOT).replace('-', '_')
 }
 
 internal object TACZAttachmentModifierRegistry {
@@ -751,3 +960,6 @@ private fun JsonObject.stringArray(key: String): List<String> =
 
 private fun JsonObject.getAsJsonObject(key: String): JsonObject? =
     get(key)?.takeIf { it.isJsonObject }?.asJsonObject
+
+private const val ALLOW_ATTACHMENT_PREFIX: String = "allow_attachments/"
+private const val ATTACHMENT_TAG_ROOT_PREFIX: String = "attachments/"

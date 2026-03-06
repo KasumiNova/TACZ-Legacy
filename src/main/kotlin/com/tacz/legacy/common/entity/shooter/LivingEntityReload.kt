@@ -1,12 +1,15 @@
 package com.tacz.legacy.common.entity.shooter
 
 import com.tacz.legacy.api.entity.ReloadState
+import com.tacz.legacy.api.event.GunReloadEvent
 import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.common.network.TACZNetworkHandler
 import com.tacz.legacy.common.network.message.event.ServerMessageReload
 import com.tacz.legacy.common.resource.BoltType
 import com.tacz.legacy.common.resource.GunDataAccessor
 import net.minecraft.entity.EntityLivingBase
+import net.minecraftforge.common.MinecraftForge
+import net.minecraftforge.fml.relauncher.Side
 
 /**
  * 服务端换弹逻辑。与上游 TACZ LivingEntityReload 行为一致。
@@ -40,6 +43,10 @@ public class LivingEntityReload(
         // 满弹判定
         val isBarrelFull = hasBulletInBarrel || gunData.boltType == BoltType.OPEN_BOLT
         if (currentAmmo >= maxAmmo && isBarrelFull) return
+
+        val logicalSide = if (shooter.world.isRemote) Side.CLIENT else Side.SERVER
+        val reloadEvent = GunReloadEvent(shooter, currentGunItem, logicalSide)
+        if (MinecraftForge.EVENT_BUS.post(reloadEvent)) return
 
         // 弹药来源检查
         val needCheck = !gunData.isReloadInfinite
@@ -77,8 +84,9 @@ public class LivingEntityReload(
             )
         }
 
-        // 广播换弹开始
-        TACZNetworkHandler.sendToTrackingEntity(ServerMessageReload(shooter.entityId, data.reloadStateType), shooter)
+        if (!shooter.world.isRemote) {
+            TACZNetworkHandler.sendToTrackingEntity(ServerMessageReload(shooter.entityId, currentGunItem), shooter)
+        }
     }
 
     /**

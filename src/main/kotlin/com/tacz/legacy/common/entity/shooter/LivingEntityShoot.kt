@@ -1,15 +1,20 @@
 package com.tacz.legacy.common.entity.shooter
 
 import com.tacz.legacy.api.entity.ShootResult
+import com.tacz.legacy.api.event.GunFireEvent
+import com.tacz.legacy.api.event.GunShootEvent
 import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.gun.FireMode
 import com.tacz.legacy.common.network.TACZNetworkHandler
+import com.tacz.legacy.common.network.message.event.ServerMessageGunFire
 import com.tacz.legacy.common.network.message.event.ServerMessageGunShoot
 import com.tacz.legacy.common.resource.BoltType
 import com.tacz.legacy.common.resource.GunDataAccessor
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.entity.player.EntityPlayerMP
 import net.minecraft.item.ItemStack
+import net.minecraftforge.common.MinecraftForge
+import net.minecraftforge.fml.relauncher.Side
 import java.util.function.Supplier
 
 /**
@@ -77,8 +82,13 @@ public class LivingEntityShoot(
             iGun.setBulletInBarrel(currentGunItem, true)
         }
 
-        // 广播射击事件
-        TACZNetworkHandler.sendToTrackingEntity(ServerMessageGunShoot(shooter.entityId), shooter)
+        val logicalSide = if (shooter.world.isRemote) Side.CLIENT else Side.SERVER
+        val shootEvent = GunShootEvent(shooter, currentGunItem, logicalSide)
+        if (MinecraftForge.EVENT_BUS.post(shootEvent)) return ShootResult.UNKNOWN_FAIL
+
+        if (!shooter.world.isRemote) {
+            TACZNetworkHandler.sendToTrackingEntity(ServerMessageGunShoot(shooter.entityId, currentGunItem), shooter)
+        }
 
         data.lastShootTimestamp = data.shootTimestamp
         data.shootTimestamp = timestamp
@@ -106,6 +116,14 @@ public class LivingEntityShoot(
             } else {
                 iGun.reduceCurrentAmmoCount(gunItem)
             }
+        }
+
+        val logicalSide = if (shooter.world.isRemote) Side.CLIENT else Side.SERVER
+        val fireEvent = GunFireEvent(shooter, gunItem, logicalSide)
+        if (MinecraftForge.EVENT_BUS.post(fireEvent)) return
+
+        if (!shooter.world.isRemote) {
+            TACZNetworkHandler.sendToTrackingEntity(ServerMessageGunFire(shooter.entityId, gunItem), shooter)
         }
 
         // 生成子弹实体

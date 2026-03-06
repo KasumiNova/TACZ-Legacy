@@ -6,6 +6,12 @@ argument-hint: "填写要迁移的渲染/动画功能、上游文件或验收约
 ---
 迁移 `TACZ` 的**渲染 / 模型 / 动画 / 客户端资源 / 客户端 Mixin 系统**到 `TACZ-Legacy`。
 
+当前阶段说明：
+
+- 数据/枪包兼容、战斗/网络、Client UX 的本阶段迭代已完成；渲染/动画侧现在可以默认消费现成 runtime snapshot、gun id/item type 解析、`ServerMessage*` 事件来源、客户端桥接入口，以及已落地的 `gun_smith_table` 基础 GUI/container/craft 链路。
+- 若任务主要是 HUD / tooltip / 输入桥接 / `gun_smith_table` 基础 GUI-container-craft 流，优先改用 `client ux` Prompt，而不是把屏幕/交互问题都塞进渲染 Prompt。
+- 若任务涉及 scope 视觉、第一/第三人称动作、枪械 display、动画采样、客户端特效或与 `ServerMessage*` 事件绑定的表现层反馈，则应优先归到本 Prompt。
+
 默认关注范围：
 
 - `client/resource/**`

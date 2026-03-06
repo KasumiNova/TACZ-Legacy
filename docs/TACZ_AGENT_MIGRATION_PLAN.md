@@ -125,12 +125,19 @@
 ## 当前阶段进展（基于当前 `TACZ-Legacy` 工作区状态）
 
 - **Foundation**：已完成第一波落地，基础启动、注册、烟测脚本与基础测试已进仓。
-- **数据/枪包兼容**：核心扫描 / 解析 / 索引 / modifier / 兼容读取主链已落地；当前优先级转为**下游对接与真实消费链路**，尤其是 tooltip / UI / 渲染显示定义，以及 block / recipe / tag / workbench 玩法接线。
-- **战斗/实体/网络**：服务端 shooter 状态机、网络通道与主消息骨架已落地；当前优先级转为**客户端消费、剩余 parity 缺口和表现层对接**，尤其是 ammo 搜索 parity、S2C 事件消息消费、heat / crawl / tracer 等后续行为。
-- 因此，下一阶段最值得投入的主线通常不是“继续重迁数据/战斗主链”，而是：
-   1. **Client UX 对接**：把已落地的数据/战斗基座接到 tooltip、HUD、Screen、本地输入反馈
-   2. **Render / Animation 对接**：把 runtime snapshot、gun id/item type 与客户端表现链路接通
-   3. **工作台 / block / recipe / tag 玩法接线**：让数据链不只是可读，而是可被真实玩法消费
+- **数据/枪包兼容**：核心扫描 / 解析 / 索引 / modifier / 兼容读取主链已落地，并已开始被真实消费到 item、tooltip、workbench 摘要、recipe filter、attachment tag 等路径；当前优先级转为**回归修复、缺口补齐与新增消费点接入**。
+- **战斗/实体/网络**：服务端 shooter 状态机、网络通道与主消息骨架已落地，并已补齐 ammo 搜索 parity、缺失的 S2C 消息类型与基础客户端事件投递链路；当前优先级转为**回归修复、剩余 parity 收尾与表现层继续消费**。
+- **客户端交互 / UI**：本阶段迭代已完成，已把 runtime 下游消费层推进到真实可用程度，并补上 `gun_smith_table` 的基础 `GUI / container / craft` 闭环。当前已落地内容包括：
+  - runtime 翻译 / display / recipe filter / workbench 摘要 / attachment tag 的真实客户端消费入口；
+  - `GunEvents`、输入桥、overlay、tooltip bridge、`TACZGunPackPresentation` 等客户端桥接层；
+  - `GunSmithTableScreen`、`LegacyGuiHandler`、`GunSmithTableContainer`、`ClientMessageGunSmithCraft`、`LegacyGunSmithingRuntime` 组成的 `1.12.2` 工匠台基础 GUI-container-craft 流；
+  - `IAttachment`、`AttachmentType`、扩展后的 `IGun` 与相关物品接线，足以支撑 `gun result` 预装附件与 by-hand filter 这轮行为。
+- **验证状态**：编译与定向测试已覆盖上述 Client UX / gunsmith runtime 变更；真实 `runClient` 手工 smoke 仍会被外部环境问题阻断——Forge 1.12 对多版本 Kotlin jar 的 ASM 扫描会在模组初始化前失败，因此当前需要把这类阻塞明确记录为**环境问题**，而不是把它误记为本轮迁移失败。
+
+因此，下一阶段最值得投入的主线通常不是“继续重迁数据/战斗/Client UX 主链”，而是：
+   1. **Render / Animation 对接**：把 runtime snapshot、gun id/item type、`ServerMessage*` 事件与客户端表现链路全面接通
+   2. **剩余 blocked 的 Client UX / Refit 能力**：例如 `GunRefitScreen`、更完整的 attachment slot 操作与 refit backend 状态接口
+   3. **第三方兼容与剩余玩法收尾**：在核心主链已成形的前提下，继续补 JEI / KubeJS / 高级玩法与表现边角
 
 补充规则：
 
@@ -145,8 +152,8 @@
 | 基础启动与注册 | `.github/prompts/tacz-migrate-foundation.prompt.md` | `TACZ Migration` | 迁移入口、配置、注册、底座 |
 | 数据/枪包兼容 | `.github/prompts/tacz-migrate-data-pack.prompt.md` | `TACZ Migration` | 在已落地 runtime/parser 基础上继续做资源消费、兼容补齐与玩法接线 |
 | 战斗/实体/网络 | `.github/prompts/tacz-migrate-combat-network.prompt.md` | `TACZ Migration` | 在已落地 shooter/network 主链基础上继续做 parity 补齐、客户端消费与表现接线 |
-| 客户端交互/UI | `.github/prompts/tacz-migrate-client-ux.prompt.md` | `TACZ Migration` | 优先把已落地数据/战斗基座接到输入、HUD、Screen、Tooltip、本地行为桥接 |
-| 渲染/动画/客户端资源 | `.github/prompts/tacz-migrate-render-animation.prompt.md` | `TACZ Migration` | 优先把 runtime snapshot、gun id/item type 与渲染、动画、模型链路接通 |
+| 客户端交互/UI | `.github/prompts/tacz-migrate-client-ux.prompt.md` | `TACZ Migration` | 在已落地输入/HUD/tooltip/`gun_smith_table` 基础 GUI-container-craft 链路上继续做回归修复、剩余 parity 与 blocked backend 收尾 |
+| 渲染/动画/客户端资源 | `.github/prompts/tacz-migrate-render-animation.prompt.md` | `TACZ Migration` | 在已落地 runtime、network、Client UX 桥接基础上继续把渲染、动画、模型、scope 与客户端表现链路接通 |
 | 第三方兼容 | `.github/prompts/tacz-migrate-compat.prompt.md` | `TACZ Migration` | 迁移 JEI/KubeJS/Cloth/动画器/光影等兼容 |
 
 ## 实际使用建议

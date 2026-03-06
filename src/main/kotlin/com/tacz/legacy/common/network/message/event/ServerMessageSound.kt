@@ -1,56 +1,103 @@
 package com.tacz.legacy.common.network.message.event
 
+import com.tacz.legacy.api.DefaultAssets
 import io.netty.buffer.ByteBuf
+import net.minecraft.client.Minecraft
+import net.minecraft.entity.EntityLivingBase
 import net.minecraft.util.ResourceLocation
+import net.minecraft.util.SoundCategory
+import net.minecraft.util.SoundEvent
 import net.minecraftforge.fml.common.network.ByteBufUtils
 import net.minecraftforge.fml.common.network.simpleimpl.IMessage
 import net.minecraftforge.fml.common.network.simpleimpl.IMessageHandler
 import net.minecraftforge.fml.common.network.simpleimpl.MessageContext
 
 /**
- * S2C: 让客户端播放指定位置的枪械音效。
+ * S2C: 让客户端播放枪械音效。
+ * 与上游 TACZ ServerMessageSound 行为一致（entityId + gunId + soundName + volume + pitch + distance）。
  */
-public class ServerMessageSound() : IMessage, IMessageHandler<ServerMessageSound, IMessage?> {
-    private var x: Double = 0.0
-    private var y: Double = 0.0
-    private var z: Double = 0.0
-    private var soundId: String = ""
-    private var volume: Float = 1.0f
-    private var pitch: Float = 1.0f
+public class ServerMessageSound() : IMessage {
+    public var entityId: Int = 0
+        private set
+    public var gunId: ResourceLocation = DefaultAssets.DEFAULT_GUN_ID
+        private set
+    public var gunDisplayId: ResourceLocation = DefaultAssets.DEFAULT_GUN_DISPLAY_ID
+        private set
+    public var soundName: String = ""
+        private set
+    public var volume: Float = 1.0f
+        private set
+    public var pitch: Float = 1.0f
+        private set
+    public var distance: Int = 64
+        private set
 
-    public constructor(x: Double, y: Double, z: Double, soundId: ResourceLocation, volume: Float, pitch: Float) : this() {
-        this.x = x
-        this.y = y
-        this.z = z
-        this.soundId = soundId.toString()
+    public constructor(
+        entityId: Int,
+        gunId: ResourceLocation,
+        gunDisplayId: ResourceLocation,
+        soundName: String,
+        volume: Float,
+        pitch: Float,
+        distance: Int,
+    ) : this() {
+        this.entityId = entityId
+        this.gunId = gunId
+        this.gunDisplayId = gunDisplayId
+        this.soundName = soundName
         this.volume = volume
         this.pitch = pitch
+        this.distance = distance
     }
 
+    public constructor(
+        entityId: Int,
+        gunId: ResourceLocation,
+        soundName: String,
+        volume: Float,
+        pitch: Float,
+        distance: Int,
+    ) : this(entityId, gunId, DefaultAssets.DEFAULT_GUN_DISPLAY_ID, soundName, volume, pitch, distance)
+
     override fun fromBytes(buf: ByteBuf) {
-        x = buf.readDouble()
-        y = buf.readDouble()
-        z = buf.readDouble()
-        soundId = ByteBufUtils.readUTF8String(buf)
+        entityId = buf.readInt()
+        gunId = ResourceLocation(ByteBufUtils.readUTF8String(buf))
+        gunDisplayId = ResourceLocation(ByteBufUtils.readUTF8String(buf))
+        soundName = ByteBufUtils.readUTF8String(buf)
         volume = buf.readFloat()
         pitch = buf.readFloat()
+        distance = buf.readInt()
     }
 
     override fun toBytes(buf: ByteBuf) {
-        buf.writeDouble(x)
-        buf.writeDouble(y)
-        buf.writeDouble(z)
-        ByteBufUtils.writeUTF8String(buf, soundId)
+        buf.writeInt(entityId)
+        ByteBufUtils.writeUTF8String(buf, gunId.toString())
+        ByteBufUtils.writeUTF8String(buf, gunDisplayId.toString())
+        ByteBufUtils.writeUTF8String(buf, soundName)
         buf.writeFloat(volume)
         buf.writeFloat(pitch)
+        buf.writeInt(distance)
     }
 
-    override fun onMessage(message: ServerMessageSound, ctx: MessageContext): IMessage? {
-        val mc = net.minecraft.client.Minecraft.getMinecraft()
-        mc.addScheduledTask {
-            // 客户端播放音效
-            // TODO: 通过 SoundEvent 或自定义播放器播放
+    public class Handler : IMessageHandler<ServerMessageSound, IMessage?> {
+        override fun onMessage(message: ServerMessageSound, ctx: MessageContext): IMessage? {
+            val mc = Minecraft.getMinecraft()
+            mc.addScheduledTask {
+                val world = mc.world ?: return@addScheduledTask
+                val entity = world.getEntityByID(message.entityId) as? EntityLivingBase ?: return@addScheduledTask
+                // 尝试通过注册的 SoundEvent 播放；若未找到则使用 ResourceLocation 合成
+                val soundRL = ResourceLocation(message.gunId.namespace, message.soundName)
+                val soundEvent = SoundEvent.REGISTRY.getObject(soundRL)
+                if (soundEvent != null) {
+                    world.playSound(
+                        entity.posX, entity.posY, entity.posZ,
+                        soundEvent, SoundCategory.PLAYERS,
+                        message.volume, message.pitch,
+                        false,
+                    )
+                }
+            }
+            return null
         }
-        return null
     }
 }

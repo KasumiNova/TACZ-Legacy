@@ -1,8 +1,10 @@
 package com.tacz.legacy.api.item
 
+import com.tacz.legacy.api.item.attachment.AttachmentType
 import com.tacz.legacy.api.item.gun.FireMode
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.item.ItemStack
+import net.minecraft.nbt.NBTTagCompound
 import net.minecraft.util.ResourceLocation
 
 /**
@@ -31,6 +33,14 @@ public interface IGun {
     public fun setDummyAmmoAmount(stack: ItemStack, amount: Int)
     public fun addDummyAmmoAmount(stack: ItemStack, amount: Int)
 
+    public fun getAttachmentTag(stack: ItemStack, type: AttachmentType): NBTTagCompound?
+    public fun getAttachment(stack: ItemStack, type: AttachmentType): ItemStack
+    public fun getAttachmentId(stack: ItemStack, type: AttachmentType): ResourceLocation
+    public fun installAttachment(gun: ItemStack, attachment: ItemStack)
+    public fun unloadAttachment(gun: ItemStack, type: AttachmentType)
+    public fun allowAttachment(gun: ItemStack, attachmentItem: ItemStack): Boolean
+    public fun allowAttachmentType(gun: ItemStack, type: AttachmentType): Boolean
+
     public fun hasAttachmentLock(stack: ItemStack): Boolean
     public fun setAttachmentLock(stack: ItemStack, locked: Boolean)
 
@@ -38,6 +48,7 @@ public interface IGun {
     public fun setOverheatLocked(stack: ItemStack, locked: Boolean)
 
     public companion object {
+        public const val ATTACHMENT_BASE_TAG: String = "Attachment"
         public const val ATTACHMENT_LOCK_TAG: String = "AttachmentLock"
         public const val DUMMY_AMMO_TAG: String = "DummyAmmo"
         public const val GUN_ID_TAG: String = "GunId"

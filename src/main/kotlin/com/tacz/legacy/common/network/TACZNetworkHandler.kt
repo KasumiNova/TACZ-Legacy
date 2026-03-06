@@ -23,6 +23,7 @@ public object TACZNetworkHandler {
 
     public fun init() {
         // Client -> Server
+        registerC2S<ClientMessageGunSmithCraft>()
         registerC2S<ClientMessagePlayerShoot>()
         registerC2S<ClientMessagePlayerReload>()
         registerC2S<ClientMessagePlayerAim>()
@@ -32,10 +33,13 @@ public object TACZNetworkHandler {
         registerC2S<ClientMessagePlayerFireSelect>()
 
         // Server -> Client (events)
-        registerS2C<ServerMessageGunShoot>()
-        registerS2C<ServerMessageReload>()
-        registerS2C<ServerMessageMelee>()
-        registerS2C<ServerMessageSound>()
+        registerS2C(ServerMessageGunShoot.Handler::class.java, ServerMessageGunShoot::class.java)
+        registerS2C(ServerMessageReload.Handler::class.java, ServerMessageReload::class.java)
+        registerS2C(ServerMessageMelee.Handler::class.java, ServerMessageMelee::class.java)
+        registerS2C(ServerMessageSound.Handler::class.java, ServerMessageSound::class.java)
+        registerS2C(ServerMessageGunFire.Handler::class.java, ServerMessageGunFire::class.java)
+        registerS2C(ServerMessageGunDraw.Handler::class.java, ServerMessageGunDraw::class.java)
+        registerS2C(ServerMessageGunFireSelect.Handler::class.java, ServerMessageGunFireSelect::class.java)
     }
 
     /**
@@ -73,7 +77,10 @@ public object TACZNetworkHandler {
         CHANNEL.registerMessage(T::class.java, T::class.java, packetId++, Side.SERVER)
     }
 
-    private inline fun <reified T> registerS2C() where T : IMessage, T : IMessageHandler<T, IMessage?> {
-        CHANNEL.registerMessage(T::class.java, T::class.java, packetId++, Side.CLIENT)
+    private fun <REQ : IMessage> registerS2C(
+        handlerClass: Class<out IMessageHandler<REQ, IMessage?>>,
+        messageClass: Class<REQ>,
+    ) {
+        CHANNEL.registerMessage(handlerClass, messageClass, packetId++, Side.CLIENT)
     }
 }

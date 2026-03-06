@@ -2,6 +2,8 @@ package com.tacz.legacy.common.entity.shooter
 
 import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.gun.FireMode
+import com.tacz.legacy.common.network.TACZNetworkHandler
+import com.tacz.legacy.common.network.message.event.ServerMessageGunFireSelect
 import com.tacz.legacy.common.resource.GunDataAccessor
 import net.minecraft.entity.EntityLivingBase
 
@@ -31,5 +33,11 @@ public class LivingEntityFireSelect(
         val nextModeName = fireModes[nextIndex]
         val nextMode = try { FireMode.valueOf(nextModeName.uppercase()) } catch (_: Exception) { FireMode.UNKNOWN }
         iGun.setFireMode(currentGunItem, nextMode)
+        if (!shooter.world.isRemote && currentMode != nextMode) {
+            TACZNetworkHandler.sendToTrackingEntity(
+                ServerMessageGunFireSelect(shooter.entityId, currentGunItem, nextMode),
+                shooter,
+            )
+        }
     }
 }

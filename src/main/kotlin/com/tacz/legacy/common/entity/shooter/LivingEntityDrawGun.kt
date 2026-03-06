@@ -1,9 +1,14 @@
 package com.tacz.legacy.common.entity.shooter
 
+import com.tacz.legacy.api.event.GunDrawEvent
 import com.tacz.legacy.api.item.IGun
+import com.tacz.legacy.common.network.TACZNetworkHandler
+import com.tacz.legacy.common.network.message.event.ServerMessageGunDraw
 import com.tacz.legacy.common.resource.GunDataAccessor
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.item.ItemStack
+import net.minecraftforge.common.MinecraftForge
+import net.minecraftforge.fml.relauncher.Side
 import java.util.function.Supplier
 
 /**
@@ -14,6 +19,17 @@ public class LivingEntityDrawGun(
     private val data: ShooterDataHolder,
 ) {
     public fun draw(gunItemSupplier: Supplier<ItemStack>) {
+        val previousGunItem = data.currentGunItem?.get() ?: ItemStack.EMPTY
+        val newGunItem = gunItemSupplier.get()
+        val logicalSide = if (shooter.world.isRemote) Side.CLIENT else Side.SERVER
+
+        MinecraftForge.EVENT_BUS.post(GunDrawEvent(shooter, previousGunItem, newGunItem, logicalSide))
+        if (!shooter.world.isRemote) {
+            TACZNetworkHandler.sendToTrackingEntity(
+                ServerMessageGunDraw(shooter.entityId, previousGunItem, newGunItem), shooter
+            )
+        }
+
         data.initialData()
 
         if (data.drawTimestamp == -1L) {
