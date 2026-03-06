@@ -122,6 +122,16 @@
 5. **渲染/动画/客户端资源**
 6. **第三方兼容**
 
+## 当前阶段进展（基于当前 `TACZ-Legacy` 工作区状态）
+
+- **Foundation**：已完成第一波落地，基础启动、注册、烟测脚本与基础测试已进仓。
+- **数据/枪包兼容**：核心扫描 / 解析 / 索引 / modifier / 兼容读取主链已落地；当前优先级转为**下游对接与真实消费链路**，尤其是 tooltip / UI / 渲染显示定义，以及 block / recipe / tag / workbench 玩法接线。
+- **战斗/实体/网络**：服务端 shooter 状态机、网络通道与主消息骨架已落地；当前优先级转为**客户端消费、剩余 parity 缺口和表现层对接**，尤其是 ammo 搜索 parity、S2C 事件消息消费、heat / crawl / tracer 等后续行为。
+- 因此，下一阶段最值得投入的主线通常不是“继续重迁数据/战斗主链”，而是：
+   1. **Client UX 对接**：把已落地的数据/战斗基座接到 tooltip、HUD、Screen、本地输入反馈
+   2. **Render / Animation 对接**：把 runtime snapshot、gun id/item type 与客户端表现链路接通
+   3. **工作台 / block / recipe / tag 玩法接线**：让数据链不只是可读，而是可被真实玩法消费
+
 补充规则：
 
 - `util/**`、`api/event/**`、`api/entity/**`、`mixin/common/**` 这类交叉支撑代码，**不要单独立项**；直接跟随其主要调用链归入某条主轨道。
@@ -133,10 +143,10 @@
 |---|---|---|---|
 | 迁移前侦察 | `.github/prompts/tacz-scan-system.prompt.md` | `Ask` | 先摸清上游真值源、边界、依赖、Legacy 落点 |
 | 基础启动与注册 | `.github/prompts/tacz-migrate-foundation.prompt.md` | `TACZ Migration` | 迁移入口、配置、注册、底座 |
-| 数据/枪包兼容 | `.github/prompts/tacz-migrate-data-pack.prompt.md` | `TACZ Migration` | 迁移资源加载、索引、JSON、modifier、兼容读取 |
-| 战斗/实体/网络 | `.github/prompts/tacz-migrate-combat-network.prompt.md` | `TACZ Migration` | 迁移核心玩法、状态同步、网络协议 |
-| 客户端交互/UI | `.github/prompts/tacz-migrate-client-ux.prompt.md` | `TACZ Migration` | 迁移输入、HUD、Screen、Tooltip、本地行为桥接 |
-| 渲染/动画/客户端资源 | `.github/prompts/tacz-migrate-render-animation.prompt.md` | `TACZ Migration` | 迁移渲染、动画、模型、客户端资产链路 |
+| 数据/枪包兼容 | `.github/prompts/tacz-migrate-data-pack.prompt.md` | `TACZ Migration` | 在已落地 runtime/parser 基础上继续做资源消费、兼容补齐与玩法接线 |
+| 战斗/实体/网络 | `.github/prompts/tacz-migrate-combat-network.prompt.md` | `TACZ Migration` | 在已落地 shooter/network 主链基础上继续做 parity 补齐、客户端消费与表现接线 |
+| 客户端交互/UI | `.github/prompts/tacz-migrate-client-ux.prompt.md` | `TACZ Migration` | 优先把已落地数据/战斗基座接到输入、HUD、Screen、Tooltip、本地行为桥接 |
+| 渲染/动画/客户端资源 | `.github/prompts/tacz-migrate-render-animation.prompt.md` | `TACZ Migration` | 优先把 runtime snapshot、gun id/item type 与渲染、动画、模型链路接通 |
 | 第三方兼容 | `.github/prompts/tacz-migrate-compat.prompt.md` | `TACZ Migration` | 迁移 JEI/KubeJS/Cloth/动画器/光影等兼容 |
 
 ## 实际使用建议

@@ -22,6 +22,12 @@ argument-hint: "填写要迁移的客户端交互/UI 功能、上游文件或验
 - 对逻辑密集的本地状态机、提示解析、HUD 文本生成等部分补测试
 - 至少完成一轮运行链路验证，证明输入和 UI 是被真实状态驱动的，而不是静态假数据
 
+当前阶段对接重点：
+
+- 优先消费已经落地的数据与战斗基座：`TACZGunPackRuntimeRegistry.getSnapshot()` / `TACZRuntimeSnapshot`、`LegacyItems`、`IGun.getGunId()`、`IGunOperator`、`ShooterDataHolder`、`TACZNetworkHandler`
+- 当前阶段不要重新发明 gun display cache、gun id 解析或本地 shooter 状态缓存；优先把 tooltip / HUD / Screen / 本地输入桥接到现有 runtime 与同步状态
+- 若涉及网络事件表现，优先消费现有 `common/network/message/event/**`，不要平行新增第二套 UI 专用消息协议
+
 通用补充要求：
 
 - 可参考工作区中的 `PrototypeMachinery` 等现成 `1.12.2` 项目作为落地示例，但行为真值仍以上游 `TACZ` 为准

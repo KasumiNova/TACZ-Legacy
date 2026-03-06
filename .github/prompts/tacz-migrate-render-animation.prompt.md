@@ -23,6 +23,12 @@ argument-hint: "填写要迁移的渲染/动画功能、上游文件或验收约
 - 对插值器、姿态采样、可见性过滤、资源解析、时序计算等逻辑密集部分补测试
 - 至少完成一轮编译/测试验证和一轮真实运行链路验证（如 `runClient` smoke、focused render path、调试日志/覆盖确认）
 
+当前阶段对接重点：
+
+- 优先消费已经落地的数据与战斗基座：`TACZGunPackRuntimeRegistry.getSnapshot()` / `TACZRuntimeSnapshot`、`LegacyItems` 的 item type 注册、`IGun.getGunId()`、`TACZNetworkHandler` 与现有 shooter/network 状态
+- 不要重做 display / gun id / item type 的平行缓存；优先把渲染、模型、动画和客户端资源链路接到现有 runtime snapshot 与枪械 item 消费路径上
+- 若涉及射击 / 换弹 / 近战的客户端表现，优先消费现有 `common/network/message/event/**` 事件消息并与渲染/音效系统接线
+
 通用补充要求：
 
 - 可参考工作区中的 `PrototypeMachinery` 等现成 `1.12.2` 项目作为落地示例，但行为真值仍以上游 `TACZ` 为准

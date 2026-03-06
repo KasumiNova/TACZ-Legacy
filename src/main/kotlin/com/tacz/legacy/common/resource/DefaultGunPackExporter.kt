@@ -1,6 +1,7 @@
 package com.tacz.legacy.common.resource
 
 import com.tacz.legacy.TACZLegacy
+import com.tacz.legacy.api.resource.ResourceManager
 import com.tacz.legacy.common.config.LegacyConfigManager
 import java.io.File
 import java.net.URI
@@ -29,6 +30,8 @@ internal object DefaultGunPackExporter {
         val overwrite = LegacyConfigManager.shouldOverwriteDefaultPack()
 
         if (targetDirectory.exists() && !overwrite) {
+            exportRegisteredResources(taczDirectory, overwrite)
+            TACZGunPackRuntimeRegistry.reload(gameDirectory)
             return ExportResult(exported = false, skipped = true, targetDirectory = targetDirectory, backupDirectory = null)
         }
 
@@ -39,7 +42,9 @@ internal object DefaultGunPackExporter {
         }
 
         targetDirectory.mkdirs()
-        copyBundledPackTo(targetDirectory.toPath())
+        copyBundledPackTo(targetDirectory.toPath(), RESOURCE_ROOT, javaClass.classLoader)
+        exportRegisteredResources(taczDirectory, overwrite)
+        TACZGunPackRuntimeRegistry.reload(gameDirectory)
         return ExportResult(exported = true, skipped = false, targetDirectory = targetDirectory, backupDirectory = backupDirectory)
     }
 
@@ -51,9 +56,39 @@ internal object DefaultGunPackExporter {
         return backupDirectory
     }
 
-    private fun copyBundledPackTo(targetDirectory: Path): Unit {
-        val resourceUrl = javaClass.classLoader.getResource(RESOURCE_ROOT)
-            ?: throw IllegalStateException("Unable to locate bundled default gun pack at $RESOURCE_ROOT")
+    private fun exportRegisteredResources(rootDirectory: File, overwrite: Boolean): Unit {
+        ResourceManager.EXTRA_ENTRIES.forEach { entry ->
+            val targetDirectory = File(rootDirectory, entry.extraDirName)
+            if (targetDirectory.exists() && !overwrite) {
+                return@forEach
+            }
+            if (targetDirectory.exists()) {
+                backupExistingDirectory(targetDirectory)
+            }
+            targetDirectory.mkdirs()
+            runCatching {
+                copyBundledPackTo(targetDirectory.toPath(), entry.srcPath, entry.modMainClass.classLoader)
+            }.onSuccess {
+                TACZLegacy.logger.info(
+                    "Exported registered gun pack resource {} from {} to {}.",
+                    entry.srcPath,
+                    entry.modMainClass.name,
+                    targetDirectory,
+                )
+            }.onFailure { throwable ->
+                TACZLegacy.logger.warn(
+                    "Failed to export registered gun pack resource {} from {}.",
+                    entry.srcPath,
+                    entry.modMainClass.name,
+                    throwable,
+                )
+            }
+        }
+    }
+
+    private fun copyBundledPackTo(targetDirectory: Path, resourceRoot: String, classLoader: ClassLoader): Unit {
+        val resourceUrl = classLoader.getResource(resourceRoot)
+            ?: throw IllegalStateException("Unable to locate bundled default gun pack at $resourceRoot")
 
         when (resourceUrl.protocol) {
             "file" -> copyDirectory(Paths.get(resourceUrl.toURI()), targetDirectory)
@@ -64,7 +99,7 @@ internal object DefaultGunPackExporter {
                 } catch (_: FileSystemAlreadyExistsException) {
                     FileSystems.getFileSystem(jarRootUri)
                 }
-                val sourceRoot = fileSystem.getPath("/$RESOURCE_ROOT")
+                val sourceRoot = fileSystem.getPath("/$resourceRoot")
                 copyDirectory(sourceRoot, targetDirectory)
             }
             else -> throw IllegalStateException("Unsupported resource protocol: ${resourceUrl.protocol}")
