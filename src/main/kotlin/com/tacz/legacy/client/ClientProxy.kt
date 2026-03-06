@@ -5,6 +5,8 @@ import com.tacz.legacy.client.event.LegacyClientInputEventHandler
 import com.tacz.legacy.client.event.LegacyClientOverlayEventHandler
 import com.tacz.legacy.client.gui.GunSmithTableScreen
 import com.tacz.legacy.client.input.LegacyKeyBindings
+import com.tacz.legacy.client.renderer.item.TACZAmmoItemRenderer
+import com.tacz.legacy.client.renderer.item.TACZAttachmentItemRenderer
 import com.tacz.legacy.client.renderer.item.TACZGunItemRenderer
 import com.tacz.legacy.client.resource.TACZClientAssetManager
 import com.tacz.legacy.common.CommonProxy
@@ -36,6 +38,8 @@ internal class ClientProxy : CommonProxy() {
 
         // Wire TEISR for gun items (requires "parent": "builtin/entity" in item model JSON)
         LegacyItems.MODERN_KINETIC_GUN.setTileEntityItemStackRenderer(TACZGunItemRenderer)
+        LegacyItems.AMMO.setTileEntityItemStackRenderer(TACZAmmoItemRenderer)
+        LegacyItems.ATTACHMENT.setTileEntityItemStackRenderer(TACZAttachmentItemRenderer)
 
         // Load client-side assets (models, textures) from the already-loaded gun pack snapshot
         val snapshot = TACZGunPackRuntimeRegistry.getSnapshot()

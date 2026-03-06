@@ -4,9 +4,15 @@ import com.google.gson.GsonBuilder
 import com.google.gson.stream.JsonReader
 import com.tacz.legacy.TACZLegacy
 import com.tacz.legacy.client.model.bedrock.BedrockModel
+import com.tacz.legacy.api.vmlib.LuaAnimationConstant
+import com.tacz.legacy.api.vmlib.LuaGunAnimationConstant
+import com.tacz.legacy.api.vmlib.LuaLibrary
 import com.tacz.legacy.client.resource.pojo.animation.bedrock.AnimationKeyframes
 import com.tacz.legacy.client.resource.pojo.animation.bedrock.BedrockAnimationFile
 import com.tacz.legacy.client.resource.pojo.animation.bedrock.SoundEffectKeyframes
+import com.tacz.legacy.client.resource.pojo.display.ammo.AmmoDisplay
+import com.tacz.legacy.client.resource.pojo.display.attachment.AttachmentDisplay
+import com.tacz.legacy.client.resource.pojo.display.block.BlockDisplay
 import com.tacz.legacy.client.resource.pojo.display.gun.GunDisplay
 import com.tacz.legacy.client.resource.pojo.model.BedrockModelPOJO
 import com.tacz.legacy.client.resource.pojo.model.BedrockVersion
@@ -22,6 +28,12 @@ import net.minecraft.client.renderer.texture.DynamicTexture
 import net.minecraft.client.renderer.texture.TextureManager
 import net.minecraft.util.ResourceLocation
 import org.apache.logging.log4j.MarkerManager
+import org.luaj.vm2.*
+import org.luaj.vm2.compiler.LuaC
+import org.luaj.vm2.lib.Bit32Lib
+import org.luaj.vm2.lib.PackageLib
+import org.luaj.vm2.lib.TableLib
+import org.luaj.vm2.lib.jse.*
 import java.awt.image.BufferedImage
 import java.io.File
 import java.io.InputStream
@@ -61,8 +73,18 @@ internal object TACZClientAssetManager {
     /** Parsed gun display data keyed by display ResourceLocation. */
     private val gunDisplays = LinkedHashMap<ResourceLocation, GunDisplay>()
 
-    /** Loaded bedrock models keyed by model ResourceLocation. */
-    private val models = LinkedHashMap<ResourceLocation, BedrockModel>()
+    /** Parsed ammo display data keyed by display ResourceLocation. */
+    private val ammoDisplays = LinkedHashMap<ResourceLocation, AmmoDisplay>()
+
+    /** Parsed attachment display data keyed by display ResourceLocation. */
+    private val attachmentDisplays = LinkedHashMap<ResourceLocation, AttachmentDisplay>()
+
+    /** Parsed block display data keyed by display ResourceLocation. */
+    private val blockDisplays = LinkedHashMap<ResourceLocation, BlockDisplay>()
+
+    /** Loaded bedrock model data keyed by model ResourceLocation. */
+    data class ModelData(val pojo: BedrockModelPOJO, val version: BedrockVersion)
+    private val models = LinkedHashMap<ResourceLocation, ModelData>()
 
     /** Texture ResourceLocations registered with the TextureManager, keyed by pack texture path. */
     private val textures = LinkedHashMap<ResourceLocation, ResourceLocation>()
@@ -70,10 +92,20 @@ internal object TACZClientAssetManager {
     /** Parsed bedrock animation files keyed by animation ResourceLocation. */
     private val animations = LinkedHashMap<ResourceLocation, BedrockAnimationFile>()
 
+    /** Compiled Lua scripts keyed by script ResourceLocation. */
+    private val scripts = LinkedHashMap<ResourceLocation, LuaTable>()
+
+    /** Lua VM libraries injected into script globals. */
+    private val luaLibraries: List<LuaLibrary> = listOf(LuaAnimationConstant(), LuaGunAnimationConstant())
+
     fun getGunDisplay(id: ResourceLocation): GunDisplay? = gunDisplays[id]
-    fun getModel(id: ResourceLocation): BedrockModel? = models[id]
+    fun getAmmoDisplay(id: ResourceLocation): AmmoDisplay? = ammoDisplays[id]
+    fun getAttachmentDisplay(id: ResourceLocation): AttachmentDisplay? = attachmentDisplays[id]
+    fun getBlockDisplay(id: ResourceLocation): BlockDisplay? = blockDisplays[id]
+    fun getModel(id: ResourceLocation): ModelData? = models[id]
     fun getTextureLocation(id: ResourceLocation): ResourceLocation? = textures[id]
     fun getAnimationFile(id: ResourceLocation): BedrockAnimationFile? = animations[id]
+    fun getScript(id: ResourceLocation): LuaTable? = scripts[id]
 
     /**
      * Reload all client assets from the [snapshot].
@@ -81,27 +113,64 @@ internal object TACZClientAssetManager {
      */
     fun reload(snapshot: TACZRuntimeSnapshot) {
         clear()
-        parseDisplayDefinitions(snapshot.gunDisplays)
+        parseGunDisplayDefinitions(snapshot.gunDisplays)
+        parseAmmoDisplayDefinitions(snapshot.ammoDisplays)
+        parseAttachmentDisplayDefinitions(snapshot.attachmentDisplays)
+        parseBlockDisplayDefinitions(snapshot.blockDisplays)
 
-        // Collect all model, texture, and animation ResourceLocations referenced by parsed displays
+        // Collect all model, texture, animation, and script ResourceLocations referenced by parsed displays
         val neededModels = LinkedHashSet<ResourceLocation>()
         val neededTextures = LinkedHashSet<ResourceLocation>()
         val neededAnimations = LinkedHashSet<ResourceLocation>()
+        val neededScripts = LinkedHashSet<ResourceLocation>()
+
+        // Gun displays
         for (display in gunDisplays.values) {
             display.modelLocation?.let(neededModels::add)
             display.modelTexture?.let(neededTextures::add)
             display.gunLod?.modelLocation?.let(neededModels::add)
             display.gunLod?.modelTexture?.let(neededTextures::add)
             display.animationLocation?.let(neededAnimations::add)
+            display.slotTextureLocation?.let(neededTextures::add)
+            display.hudTextureLocation?.let(neededTextures::add)
+            display.hudEmptyTextureLocation?.let(neededTextures::add)
+            // Collect script locations; default to tacz:default_state_machine if not specified
+            val scriptLoc = display.stateMachineLocation ?: ResourceLocation("tacz", "default_state_machine")
+            neededScripts.add(scriptLoc)
+        }
+
+        // Ammo displays
+        for (display in ammoDisplays.values) {
+            display.modelLocation?.let(neededModels::add)
+            display.modelTexture?.let(neededTextures::add)
+            display.slotTextureLocation?.let(neededTextures::add)
+        }
+
+        // Attachment displays
+        for (display in attachmentDisplays.values) {
+            display.model?.let(neededModels::add)
+            display.texture?.let(neededTextures::add)
+            display.slotTextureLocation?.let(neededTextures::add)
+            display.attachmentLod?.modelLocation?.let(neededModels::add)
+            display.attachmentLod?.modelTexture?.let(neededTextures::add)
+        }
+
+        // Block displays
+        for (display in blockDisplays.values) {
+            display.modelLocation?.let(neededModels::add)
+            display.modelTexture?.let(neededTextures::add)
         }
 
         // Load assets from each pack
         for (pack in snapshot.packs.values) {
-            loadAssetsFromPack(pack.sourceFile, neededModels, neededTextures, neededAnimations)
+            loadAssetsFromPack(pack.sourceFile, neededModels, neededTextures, neededAnimations, neededScripts)
         }
 
-        TACZLegacy.logger.info(MARKER, "Client assets reloaded: {} displays, {} models, {} textures, {} animations",
-            gunDisplays.size, models.size, textures.size, animations.size)
+        val totalDisplays = gunDisplays.size + ammoDisplays.size + attachmentDisplays.size + blockDisplays.size
+        TACZLegacy.logger.info(MARKER,
+            "Client assets reloaded: {} displays (gun={}, ammo={}, attach={}, block={}), {} models, {} textures, {} animations, {} scripts",
+            totalDisplays, gunDisplays.size, ammoDisplays.size, attachmentDisplays.size, blockDisplays.size,
+            models.size, textures.size, animations.size, scripts.size)
     }
 
     fun clear() {
@@ -111,12 +180,16 @@ internal object TACZClientAssetManager {
             textureManager.deleteTexture(texLoc)
         }
         gunDisplays.clear()
+        ammoDisplays.clear()
+        attachmentDisplays.clear()
+        blockDisplays.clear()
         models.clear()
         textures.clear()
         animations.clear()
+        scripts.clear()
     }
 
-    private fun parseDisplayDefinitions(rawDisplays: Map<ResourceLocation, TACZDisplayDefinition>) {
+    private fun parseGunDisplayDefinitions(rawDisplays: Map<ResourceLocation, TACZDisplayDefinition>) {
         for ((id, def) in rawDisplays) {
             try {
                 val display = DISPLAY_GSON.fromJson(def.raw, GunDisplay::class.java)
@@ -128,18 +201,55 @@ internal object TACZClientAssetManager {
         }
     }
 
+    private fun parseAmmoDisplayDefinitions(rawDisplays: Map<ResourceLocation, TACZDisplayDefinition>) {
+        for ((id, def) in rawDisplays) {
+            try {
+                val display = DISPLAY_GSON.fromJson(def.raw, AmmoDisplay::class.java)
+                display.init()
+                ammoDisplays[id] = display
+            } catch (e: Exception) {
+                TACZLegacy.logger.warn(MARKER, "Failed to parse ammo display: {}", id, e)
+            }
+        }
+    }
+
+    private fun parseAttachmentDisplayDefinitions(rawDisplays: Map<ResourceLocation, TACZDisplayDefinition>) {
+        for ((id, def) in rawDisplays) {
+            try {
+                val display = DISPLAY_GSON.fromJson(def.raw, AttachmentDisplay::class.java)
+                display.init()
+                attachmentDisplays[id] = display
+            } catch (e: Exception) {
+                TACZLegacy.logger.warn(MARKER, "Failed to parse attachment display: {}", id, e)
+            }
+        }
+    }
+
+    private fun parseBlockDisplayDefinitions(rawDisplays: Map<ResourceLocation, TACZDisplayDefinition>) {
+        for ((id, def) in rawDisplays) {
+            try {
+                val display = DISPLAY_GSON.fromJson(def.raw, BlockDisplay::class.java)
+                display.init()
+                blockDisplays[id] = display
+            } catch (e: Exception) {
+                TACZLegacy.logger.warn(MARKER, "Failed to parse block display: {}", id, e)
+            }
+        }
+    }
+
     private fun loadAssetsFromPack(
         packFile: File,
         neededModels: Set<ResourceLocation>,
         neededTextures: Set<ResourceLocation>,
         neededAnimations: Set<ResourceLocation>,
+        neededScripts: Set<ResourceLocation>,
     ) {
         if (!packFile.exists()) return
 
         if (packFile.isDirectory) {
-            loadFromDirectory(packFile, neededModels, neededTextures, neededAnimations)
+            loadFromDirectory(packFile, neededModels, neededTextures, neededAnimations, neededScripts)
         } else if (packFile.name.endsWith(".zip", ignoreCase = true)) {
-            loadFromZip(packFile, neededModels, neededTextures, neededAnimations)
+            loadFromZip(packFile, neededModels, neededTextures, neededAnimations, neededScripts)
         }
     }
 
@@ -150,6 +260,7 @@ internal object TACZClientAssetManager {
         neededModels: Set<ResourceLocation>,
         neededTextures: Set<ResourceLocation>,
         neededAnimations: Set<ResourceLocation>,
+        neededScripts: Set<ResourceLocation>,
     ) {
         try {
             ZipFile(file).use { zip ->
@@ -188,6 +299,17 @@ internal object TACZClientAssetManager {
                         TACZLegacy.logger.warn(MARKER, "Failed to load animation {} from {}", animLoc, file.name, e)
                     }
                 }
+                for (scriptLoc in neededScripts) {
+                    if (scripts.containsKey(scriptLoc)) continue
+                    val entryPath = "assets/${scriptLoc.namespace}/scripts/${scriptLoc.path}.lua"
+                    val entry = zip.getEntry(entryPath) ?: continue
+                    try {
+                        val source = zip.getInputStream(entry).bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+                        loadScriptFromSource(scriptLoc, source)
+                    } catch (e: Exception) {
+                        TACZLegacy.logger.warn(MARKER, "Failed to load script {} from {}", scriptLoc, file.name, e)
+                    }
+                }
             }
         } catch (e: Exception) {
             TACZLegacy.logger.warn(MARKER, "Failed to open pack zip: {}", file.name, e)
@@ -201,6 +323,7 @@ internal object TACZClientAssetManager {
         neededModels: Set<ResourceLocation>,
         neededTextures: Set<ResourceLocation>,
         neededAnimations: Set<ResourceLocation>,
+        neededScripts: Set<ResourceLocation>,
     ) {
         for (modelLoc in neededModels) {
             if (models.containsKey(modelLoc)) continue
@@ -236,6 +359,17 @@ internal object TACZClientAssetManager {
                 TACZLegacy.logger.warn(MARKER, "Failed to load animation {} from dir {}", animLoc, root.name, e)
             }
         }
+        for (scriptLoc in neededScripts) {
+            if (scripts.containsKey(scriptLoc)) continue
+            val filePath = root.toPath().resolve("assets/${scriptLoc.namespace}/scripts/${scriptLoc.path}.lua")
+            if (!Files.isRegularFile(filePath)) continue
+            try {
+                val source = Files.newBufferedReader(filePath, StandardCharsets.UTF_8).use { it.readText() }
+                loadScriptFromSource(scriptLoc, source)
+            } catch (e: Exception) {
+                TACZLegacy.logger.warn(MARKER, "Failed to load script {} from dir {}", scriptLoc, root.name, e)
+            }
+        }
     }
 
     // ------ Model parsing ------
@@ -248,7 +382,7 @@ internal object TACZClientAssetManager {
             TACZLegacy.logger.warn(MARKER, "Unknown bedrock format version in model {}: {}", id, pojo.formatVersion)
             return
         }
-        models[id] = BedrockModel(pojo, version)
+        models[id] = ModelData(pojo, version)
     }
 
     // ------ Texture loading ------
@@ -276,5 +410,34 @@ internal object TACZClientAssetManager {
             return
         }
         animations[id] = animFile
+    }
+
+    // ------ Script loading ------
+
+    private fun createSecureGlobals(): Globals {
+        val globals = Globals()
+        globals.load(JseBaseLib())
+        globals.load(PackageLib())
+        globals.load(Bit32Lib())
+        globals.load(TableLib())
+        globals.load(org.luaj.vm2.lib.StringLib())
+        globals.load(JseMathLib())
+        LuaC.install(globals)
+        return globals
+    }
+
+    private fun loadScriptFromSource(id: ResourceLocation, source: String) {
+        val globals = createSecureGlobals()
+        val chunk = globals.load(source, id.toString())
+        val result = chunk.call()
+        if (result is LuaTable) {
+            // Install our VM library constants into the chunk table
+            for (lib in luaLibraries) {
+                lib.install(result)
+            }
+            scripts[id] = result
+        } else {
+            TACZLegacy.logger.warn(MARKER, "Script {} did not return a table", id)
+        }
     }
 }
