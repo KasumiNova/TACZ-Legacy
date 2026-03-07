@@ -9,8 +9,8 @@ argument-hint: "填写枪械贴图、ammo/attachment 物品贴图、特殊方块
 ## 新一轮对比测试反馈（必须覆盖）
 
 1. **某些枪模在上游带有内建数字/字模/能量读数等模型文字显示，但 Legacy 目前没有。**
-   - 这不是单纯 HUD 文案问题，而是 gun runtime / material / model text layer 没有被真实消费。
-   - 本轮必须检查：这些数字/字模是来自模型骨骼上的独立 mesh、贴图帧、emissive 层，还是运行时文本渲染节点；然后按上游语义恢复，而不是拿 GUI 叠字糊上去。
+   - ~~已完成~~：TextShow / PapiManager / TextShowRender / delegate render 机制已完整移植并接线（commit `5aecc61`），含 ColorHex 解析、`%ammo_count%` / `%player_name%` 占位符、bone-aligned GL 文字渲染。已有 8 项回归测试覆盖，focused smoke PASS。
+   - 剩余：若有 emissive 层、贴图帧切换、能量条等非文字 runtime material 表现，仍需后续补齐。
 2. **如果整体枪模尺寸差异的根因来自 gun-specific runtime / display node / view node 没有被正确消费，而不是第一人称 pose 插值问题，这条 Prompt 也要接住。**
    - 若确认问题属于 base viewmodel pose / ADS 插值 / recoil，则移交给 render-animation-first-person Prompt；不要两个 Prompt 抢同一种偏差。
 
