@@ -81,11 +81,17 @@ internal object TACZAudioRuntime {
                         backendMode = backendMode,
                         probeStatus = descriptor?.probeStatus ?: TACZAudioProbeStatus.UNTRACKED,
                         disposition = if (instance != null) {
-                            TACZAudioSubmissionDisposition.PLAYED
+                            TACZAudioSubmissionDisposition.SUBMITTED_TO_BACKEND
                         } else {
                             TACZAudioSubmissionDisposition.DROPPED
                         },
-                        notes = descriptor?.notes,
+                        notes = buildString {
+                            append("legacy-backend-submission")
+                            descriptor?.notes?.let {
+                                append("; ")
+                                append(it)
+                            }
+                        },
                     )
                 )
                 instance

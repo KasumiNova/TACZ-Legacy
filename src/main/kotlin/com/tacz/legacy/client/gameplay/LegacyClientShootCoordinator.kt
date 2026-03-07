@@ -6,6 +6,7 @@ import com.tacz.legacy.api.event.GunShootEvent
 import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.gun.FireMode
 import com.tacz.legacy.client.animation.statemachine.GunAnimationConstant
+import com.tacz.legacy.client.event.FirstPersonRenderGunEvent
 import com.tacz.legacy.common.network.TACZNetworkHandler
 import com.tacz.legacy.common.network.message.client.ClientMessagePlayerShoot
 import com.tacz.legacy.common.resource.BoltType
@@ -75,6 +76,8 @@ internal object LegacyClientShootCoordinator {
         if (triggerAnimation) {
             LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_SHOOT)
         }
+        // Record shoot timestamp for procedural recoil/sway animation
+        FirstPersonRenderGunEvent.onShoot()
         return ShootResult.SUCCESS
     }
 

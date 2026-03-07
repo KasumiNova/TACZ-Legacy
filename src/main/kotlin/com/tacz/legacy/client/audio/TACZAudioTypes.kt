@@ -34,7 +34,7 @@ internal enum class TACZAudioProbeStatus(val dedicatedCompatible: Boolean) {
 }
 
 internal enum class TACZAudioSubmissionDisposition {
-    PLAYED,
+    SUBMITTED_TO_BACKEND,
     RECORDED_ONLY,
     DROPPED,
 }

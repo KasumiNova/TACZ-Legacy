@@ -7,8 +7,10 @@ import com.tacz.legacy.client.model.bedrock.BedrockPart;
 import com.tacz.legacy.client.model.functional.AttachmentRender;
 import com.tacz.legacy.client.model.functional.LeftHandRender;
 import com.tacz.legacy.client.model.functional.RightHandRender;
+import com.tacz.legacy.client.model.functional.TextShowRender;
 import com.tacz.legacy.client.resource.TACZClientAssetManager;
 import com.tacz.legacy.client.resource.index.ClientAttachmentIndex;
+import com.tacz.legacy.client.resource.pojo.display.gun.TextShow;
 import com.tacz.legacy.client.resource.pojo.model.BedrockModelPOJO;
 import com.tacz.legacy.client.resource.pojo.model.BedrockVersion;
 import net.minecraft.item.ItemStack;
@@ -19,6 +21,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static com.tacz.legacy.client.model.GunModelConstant.ATTACHMENT_ADAPTER_NODE;
@@ -30,6 +33,7 @@ import static com.tacz.legacy.client.model.GunModelConstant.HANDGUARD_TACTICAL_N
 import static com.tacz.legacy.client.model.GunModelConstant.IRON_VIEW_NODE;
 import static com.tacz.legacy.client.model.GunModelConstant.LEFTHAND_POS_NODE;
 import static com.tacz.legacy.client.model.GunModelConstant.MOUNT;
+import static com.tacz.legacy.client.model.GunModelConstant.MUZZLE_FLASH_ORIGIN_NODE;
 import static com.tacz.legacy.client.model.GunModelConstant.RIGHTHAND_POS_NODE;
 import static com.tacz.legacy.client.model.GunModelConstant.SIGHT;
 import static com.tacz.legacy.client.model.GunModelConstant.SIGHT_FOLDED;
@@ -55,6 +59,8 @@ public class BedrockGunModel extends BedrockAnimatedModel {
     @Nullable
     private List<BedrockPart> scopePosPath;
     @Nullable
+    private List<BedrockPart> muzzleFlashPosPath;
+    @Nullable
     private ResourceLocation activeGunTexture;
 
     private boolean renderHand = false;
@@ -66,6 +72,7 @@ public class BedrockGunModel extends BedrockAnimatedModel {
         this.rightHandRender = new RightHandRender(this);
         this.ironSightPath = getPath(modelMap.get(IRON_VIEW_NODE));
         this.scopePosPath = getPath(modelMap.get(AttachmentType.SCOPE.getSerializedName() + ATTACHMENT_POS_SUFFIX));
+        this.muzzleFlashPosPath = getPath(modelMap.get(MUZZLE_FLASH_ORIGIN_NODE));
 
         this.setFunctionalRenderer(LEFTHAND_POS_NODE, bedrockPart -> leftHandRender);
         this.setFunctionalRenderer(RIGHTHAND_POS_NODE, bedrockPart -> rightHandRender);
@@ -77,6 +84,15 @@ public class BedrockGunModel extends BedrockAnimatedModel {
         this.setFunctionalRenderer(HANDGUARD_TACTICAL_NODE, this::handguardTacticalRender);
         this.setFunctionalRenderer(ATTACHMENT_ADAPTER_NODE, this::attachmentAdapterNodeRender);
         allAttachmentRender();
+    }
+
+    /**
+     * Register text show functional renderers for named bones.
+     * Port of upstream TACZ BedrockGunModel.setTextShowList().
+     */
+    public void setTextShowList(Map<String, TextShow> textShowList) {
+        textShowList.forEach((name, textShow) ->
+                this.setFunctionalRenderer(name, bedrockPart -> new TextShowRender(this, textShow, currentGunItem)));
     }
 
     private void allAttachmentRender() {
@@ -264,6 +280,11 @@ public class BedrockGunModel extends BedrockAnimatedModel {
     @Nullable
     public List<BedrockPart> getScopePosPath() {
         return scopePosPath;
+    }
+
+    @Nullable
+    public List<BedrockPart> getMuzzleFlashPosPath() {
+        return muzzleFlashPosPath;
     }
 
     @Override

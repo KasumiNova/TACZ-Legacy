@@ -1,5 +1,6 @@
 package com.tacz.legacy.client.model.bedrock;
 
+import com.tacz.legacy.client.model.IFunctionalRenderer;
 import com.tacz.legacy.client.resource.pojo.model.*;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
@@ -16,6 +17,12 @@ import java.util.*;
  */
 public class BedrockModel {
     public static final BedrockModel DUMMY = new BedrockModel();
+
+    /**
+     * Renderers delegated to run after the main model render pass completes.
+     * Used by TextShowRender to avoid corrupting GL state during bone traversal.
+     */
+    protected List<IFunctionalRenderer> delegateRenderers = new ArrayList<>();
 
     protected final HashMap<String, ModelRendererWrapper> modelMap = new HashMap<>();
     protected final HashMap<String, BonesItem> indexBones = new HashMap<>();
@@ -260,6 +267,13 @@ public class BedrockModel {
     }
 
     /**
+     * Register a renderer to be invoked after the main model render pass.
+     */
+    public void delegateRender(IFunctionalRenderer renderer) {
+        delegateRenderers.add(renderer);
+    }
+
+    /**
      * Render all root bones using 1.12.2 GL immediate mode.
      * Caller must bind texture and set up GL state before calling this.
      */
@@ -275,6 +289,15 @@ public class BedrockModel {
 
         // Restore lightmap in case any illuminated bones changed it
         OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, prevBX, prevBY);
+
+        // Execute delegate renderers (e.g. text show) after main pass
+        if (!delegateRenderers.isEmpty()) {
+            int packedLight = (int) prevBX | ((int) prevBY << 16);
+            for (IFunctionalRenderer delegate : delegateRenderers) {
+                delegate.render(packedLight);
+            }
+            delegateRenderers = new ArrayList<>();
+        }
     }
 
     @Nullable

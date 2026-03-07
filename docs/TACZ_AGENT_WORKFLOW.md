@@ -131,6 +131,7 @@
 - `.agent-workspace/` 必须加入 `.gitignore`。
 - 阶段报告可以写详细一些，但**不要把正式结论只放在这里**；正式状态仍必须回写到 Git 文档。
 - 若一个任务只改测试/脚本，也仍然要写阶段报告，因为它改变了当前验证结论。
+- 若任务包含视觉冒烟验证，可把 `build/smoke-tests/last-focused-screenshots.txt` 中列出的截图文件作为辅助证据引用；多截图场景下应在报告里说明各张图分别验证了什么。
 - 若任务完成后没有任何文档更新，应视为流程未完成。
 - 若任务属于“阶段完成”，报告中必须明确：
   - 当前已完成内容
@@ -143,3 +144,4 @@
 - 渲染 Agent：完成后同步更新 render 相关 Prompt / 设计文档 / 迁移计划
 - Combat Agent：完成后同步更新 `docs/TACZ_AGENT_MIGRATION_PLAN.md` 中的 combat 状态与验收结论
 - Foundation Agent：完成后同步更新 smoke / hook / 诊断覆盖范围说明
+- 视觉检查优先使用工作区内 `scripts/capture_window.sh`；便携化说明见 `docs/AGENT_SCREENSHOT_WORKFLOW.md`

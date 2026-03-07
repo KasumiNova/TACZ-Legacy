@@ -127,7 +127,7 @@
 - **Foundation**：已完成第一波落地，基础启动、注册、烟测脚本与基础测试已进仓。
 - **数据/枪包兼容**：核心扫描 / 解析 / 索引 / modifier / 兼容读取主链已落地，并已开始被真实消费到 item、tooltip、workbench 摘要、recipe filter、attachment tag 等路径；当前优先级转为**回归修复、缺口补齐与新增消费点接入**。
 - **战斗/实体/网络**：服务端 shooter 状态机、网络通道与主消息骨架已落地，并已补齐 ammo 搜索 parity、缺失的 S2C 消息类型与基础客户端事件投递链路；当前优先级转为**回归修复、剩余 parity 收尾与表现层继续消费**。
-- **音频系统 / smoke 守门**：专用音频 runtime 的阶段 A/B 已落地：`GunSoundPlayManager -> TACZAudioRuntime` 统一 facade 已建立，reload 阶段已有 manifest/probe/preflight，`diagnostic/null` backend 可用于 smoke，`GunPackSoundResourcePack` 被降级为 `legacy-minecraft` fallback，focused smoke 默认不再依赖原版资源刷新路径。当前剩余重点为：dedicated playback backend、decode/normalize/cache 与不兼容资源处置策略。
+- **音频系统 / smoke 守门**：专用音频 runtime 的阶段 A/B 已落地：`GunSoundPlayManager -> TACZAudioRuntime` 统一 facade 已建立，reload 阶段已有 manifest/probe/preflight，`diagnostic/null` backend 可用于 smoke，`GunPackSoundResourcePack` 被降级为 `legacy-minecraft` fallback，focused smoke 默认不再依赖原版资源刷新路径。最新两轮 focused smoke 已把根因进一步钉死：`diagnostic` 模式证明 animation / `ServerMessageSound` 请求都能进入 runtime；而默认 `legacy-minecraft` 路径（`build/smoke-tests/runclient-focused-smoke-20260308-032140.log`）证明客户端默认 backend 仍是旧 `SoundHandler` 链，`tacz:hk_mp5a5/hk_mp5a5_shoot` 可提交到 backend，但 `minecraft:rpg7_reload_lower` 这类缺失动画音效会在 legacy 播放链触发 `CodecJOrbis` / `Unable to acquire inputstream` 并拖垮 `runClient`。因此当前“武器没音效”的主因已经明确不是“请求没对接到 runtime”，而是“默认可听 backend 仍是 legacy，且仍暴露上游缺失/不兼容资源与旧解码链问题”。当前剩余重点为：dedicated playback backend、decode/normalize/cache 与不兼容资源处置策略。
 - **客户端交互 / UI**：本阶段迭代已完成，已把 runtime 下游消费层推进到真实可用程度，并补上 `gun_smith_table` 的基础 `GUI / container / craft` 闭环。当前已落地内容包括：
   - runtime 翻译 / display / recipe filter / workbench 摘要 / attachment tag 的真实客户端消费入口；
   - `GunEvents`、输入桥、overlay、tooltip bridge、`TACZGunPackPresentation` 等客户端桥接层；
@@ -140,6 +140,9 @@
    - `client/resource/TACZClientAssetManager.kt` 与 `client/renderer/item/TACZGunItemRenderer.kt`，以及 `ClientProxy.kt` 中的 item 渲染接线；
    - `BedrockModelParsingTest`、`GunDisplayParsingTest` 等解析回归测试；
    - 一轮成功的 `runClient` smoke，已确认客户端能够从 gun pack 成功加载 `110` 个 display、`166` 个 model、`166` 个 texture。
+   - 第一人称动画子轨本轮已补齐关键 parity 缺口：`GunDisplayInstance.checkAnimation()` / `TACZClientAssetManager.kt` 现已对齐上游 `default_animation` 与 `use_default_animation(rifle/pistol)` 的 controller prototype 回退语义；`FirstPersonRenderGunEvent.kt` 新增了等价于上游 `TickAnimationEvent(RenderTickEvent)` 的 `visualUpdate()` / `updateSoundOnly()` 驱动；`LegacyClientPlayerGunBridge.kt` + `LegacyClientGunAnimationDriver.kt` 现已把近战输入真正路由到 `INPUT_BAYONET_MUZZLE / STOCK / PUSH`，并补上 `put_away` 的 exiting 生命周期；
+   - 这也解释了为什么此前只有 `special_melee_task_manager` 一类少数资源看起来还能动，而标准枪几乎静止：前者自带完整动画原型，后者大量依赖 `rifle_default / pistol_default` 回退；Legacy 之前没有把这些默认 prototype 装入 controller，状态机即使收到了 trigger，也只能驱动一个缺胳膊少腿的动画集合；
+   - 最新 focused smoke（`build/smoke-tests/runclient-focused-smoke-20260308-020616.log`）已打到 `ANIMATION_OBSERVED` 与 `PASS`，并留下截图 `build/smoke-tests/focused-smoke-screenshots/runclient-focused-smoke-20260308-020616/01-animation_observed.png`；日志中可见标准枪 `tacz:hk_mp5a5` 运行时 `defaultType=rifle`、`smInitialized=true`，证明默认回退与第一人称动画链已经真正走到运行时，而不只是单测层面的静态修复。
 - **验证状态**：编译与定向测试已覆盖 Client UX / gunsmith / refit backend / render parsing 等阶段性变更；渲染基础设施已有一轮成功的 `runClient` smoke。后续若某些 client UX / refit 手工路径再次被 Forge 1.12 对多版本 Kotlin jar 的 ASM 扫描问题挡在模组初始化前，仍应按“环境阻塞而非本轮回归”记录，不要把阶段性验证结论混成一团。
 
 因此，下一阶段最值得投入的主线通常不是“继续重迁数据/战斗/Client UX/Render 基础设施主链”，而是：
@@ -147,6 +150,34 @@
       2. **Combat 剩余 parity 子轨**：普通枪稳定出弹、伤害真值、爆炸物命中/延时爆炸语义与服务端裁决一致性
       3. **剩余 blocked 的 Client UX / Refit 能力**：例如 `GunRefitScreen` 本体、安装/卸下/laser 提交消息、screen refresh 回包、附件属性刷新与副作用链
       4. **第三方兼容与剩余玩法收尾**：在核心主链已成形的前提下，继续补 JEI / KubeJS / 高级玩法与表现边角
+
+## 最新对比测试回归分诊（2026-03-08）
+
+本轮对比截图与实机反馈说明：**当前剩余问题已经不适合让一个 Agent 全包。** 建议继续复用同一个 `TACZ Migration` Agent，但按下面的 Prompt/轨道拆分迭代。
+
+| 用户可见症状 | 推荐 Prompt | 使用 Agent | 归属说明 |
+|---|---|---|---|
+| 枪模整体偏小、基础持枪/瞄准位置不对、ADS 卡顿像 tick 驱动、开火时枪械抽搐、枪焰缺失、镜头抖动/后坐力没做、非 idle 动画大量缺失 | `.github/prompts/tacz-stage-render-animation-first-person.prompt.md` | `TACZ Migration` | 这是第一人称 pose / animation runtime / render-frame 插值 / fire feedback 的直接职责，优先交给渲染动画 Agent |
+| 某些枪模型本应显示的数字/字模/能量读数缺失，或 gun-specific runtime/material 节点没被消费 | `.github/prompts/tacz-stage-render-material-parity.prompt.md` | `TACZ Migration` | 这是 gun-specific model runtime / material / model text layer parity，不应塞给 GUI 或 combat |
+| 武器完全没音效，需要回答“没对接”还是“实现有问题” | `.github/prompts/tacz-stage-audio-engine-compat.prompt.md` | `TACZ Migration` | 音频 Agent 应负责 runtime/backend/真实播放验证；不能再用 diagnostic smoke 代替可听结果 |
+| 沉浸式改装 GUI 与上游完全不是一个东西，枪模没有从手持状态平滑过渡到屏幕内预览 | `.github/prompts/tacz-stage-client-ux-gui-i18n.prompt.md` | `TACZ Migration` | 这属于 `GunRefitScreen` / screen composition / preview transition / 交互体验 parity，主责不在 render fire feedback |
+| 爆发模式没有冷却、打成错误射速 | `.github/prompts/tacz-migrate-combat-network.prompt.md` | `TACZ Migration` | 这是 fire-mode / cadence / server accept gate 真值问题，主责在 combat/network |
+| 若以上任一 Agent 被共享 hook / smoke / 注册问题挡住 | `.github/prompts/tacz-stage-foundation-client-hooks.prompt.md` | `TACZ Migration` | Foundation 只负责共享接线与验证守门，不接管 feature 本体 |
+
+### 本轮建议迭代顺序
+
+1. **Render Animation / First-Person Agent**
+   - 先处理“看起来就不对”的第一人称核心问题：尺寸/位置、ADS 插值、非 idle 动画、fire 抖动、枪焰、镜头抖动、后坐力。
+2. **Audio Agent**
+   - 明确回答“无音效”到底是没接上还是 backend 没真正播放，并给出真实客户端证据。
+3. **Render Material Agent**
+   - 继续补 gun-specific runtime/material parity，特别是模型字模 / 数字显示 / 剩余 attachment-display 细节。
+4. **Client UX Agent**
+   - 收 `GunRefitScreen` 的沉浸式视觉与交互一致性，重点是 world-to-screen 枪模过渡与 screen 组织，而不是只修 backend。
+5. **Combat Agent**
+   - 收 burst cadence、剩余 fire-mode / projectile / damage / explosion 真值问题。
+6. **Foundation Agent（按需介入）**
+   - 只在上面几条被共享 hook / smoke / 注册阻塞时介入。
 
 ## Agent 交付与交接机制
 
@@ -173,8 +204,8 @@
 | 基础启动与注册 | `.github/prompts/tacz-migrate-foundation.prompt.md` | `TACZ Migration` | 迁移入口、配置、注册、底座 |
 | 数据/枪包兼容 | `.github/prompts/tacz-migrate-data-pack.prompt.md` | `TACZ Migration` | 在已落地 runtime/parser 基础上继续做资源消费、兼容补齐与玩法接线 |
 | 战斗/实体/网络 | `.github/prompts/tacz-migrate-combat-network.prompt.md` | `TACZ Migration` | 在已落地 shooter/network 主链基础上继续做 parity 补齐、客户端消费与表现接线 |
-| 客户端交互/UI | `.github/prompts/tacz-migrate-client-ux.prompt.md` | `TACZ Migration` | 在已落地输入/HUD/tooltip/`gun_smith_table` 与 refit accessor/backend 真值基础上继续做回归修复、剩余 parity 与 blocked backend 收尾 |
-| 渲染/动画/客户端资源 | `.github/prompts/tacz-migrate-render-animation.prompt.md` | `TACZ Migration` | 在已落地 bedrock model/display/asset manager/gun item TEISR 基础上继续补动画、第一人称、scope 与特效链路 |
+| 客户端交互/UI | `.github/prompts/tacz-stage-client-ux-gui-i18n.prompt.md` | `TACZ Migration` | 在已落地输入/HUD/tooltip/`gun_smith_table` 与 refit accessor/backend 真值基础上继续做回归修复、剩余 parity 与沉浸式 GUI 收尾 |
+| 渲染/动画/第一人称 | `.github/prompts/tacz-stage-render-animation-first-person.prompt.md` | `TACZ Migration` | 在已落地 bedrock model/display/asset manager/gun item TEISR 基础上继续补第一人称动画、ADS、镜头/后坐力与 fire feedback |
 | 第三方兼容 | `.github/prompts/tacz-migrate-compat.prompt.md` | `TACZ Migration` | 迁移 JEI/KubeJS/Cloth/动画器/光影等兼容 |
 
 ## 本阶段细化 Prompt（直接投喂各 Agent）
@@ -184,9 +215,10 @@
 | 症状 / 目标 | Prompt 文件 | 使用 Agent | 适用说明 |
 |---|---|---|---|
 | 枪械贴图不对、`ammo/attachment` 物品像图集、GUI/掉落物错误画 3D 模型、特殊方块模型缺失或回退 | `.github/prompts/tacz-stage-render-material-parity.prompt.md` | `TACZ Migration` | 给渲染 Agent 使用，重点修 asset manager / renderer / item-block display 消费链，并在必要时补 1.12.2 的物品渲染上下文桥接，不重造第二套资源缓存 |
-| 动画不播放、没有声音、手模不渲染或贴图错误、第一人称/scope 表现缺失 | `.github/prompts/tacz-stage-render-animation-first-person.prompt.md` | `TACZ Migration` | 给渲染 Agent 使用，重点修动画 runtime、声音通道、第一人称 hook / client mixin / hand-scope 渲染链，以及 faithful 的 hand renderer 语义 |
-| 枪包音频格式不兼容、`refreshResources()` 触发卡顿/卡死、focused smoke 被音频链路阻塞、需要专用 backend / preflight / 静默后端 | `.github/prompts/tacz-stage-audio-engine-compat.prompt.md` | `TACZ Migration` | 给音频 Agent 使用，重点把 TACZ gun-pack 音频从 1.12 原版声音栈中解耦，统一动画音效与网络音效入口，并为 smoke/CI 建立 null backend 与兼容性预检 |
-| GUI 样式半成品、按钮贴图仍是原版、中文环境大量英文、创造模式分类不够细 | `.github/prompts/tacz-stage-client-ux-gui-i18n.prompt.md` | `TACZ Migration` | 给 Client UX Agent 使用，重点做 `GunRefitScreen` / `GunSmithTableScreen` 视觉复刻、I18n 语言源修正、tooltip/HUD 文案清理，以及创造模式分类按上游真值细分 |
+| 动画不播放、手模不渲染、第一人称/scope 表现缺失、ADS/开火反馈错误 | `.github/prompts/tacz-stage-render-animation-first-person.prompt.md` | `TACZ Migration` | 给渲染 Agent 使用，重点修动画 runtime、第一人称 hook / client mixin / hand-scope 渲染链、ADS 插值、fire feedback 与 faithful 的 hand renderer 语义 |
+| 武器完全没音效、枪包音频格式不兼容、`refreshResources()` 触发卡顿/卡死、focused smoke 被音频链路阻塞、需要专用 backend / preflight / 静默后端 | `.github/prompts/tacz-stage-audio-engine-compat.prompt.md` | `TACZ Migration` | 给音频 Agent 使用，重点把 TACZ gun-pack 音频从 1.12 原版声音栈中解耦，统一动画音效与网络音效入口，并明确回答“没对接还是实现有 bug” |
+| GUI 样式半成品、沉浸式改装界面与上游差距大、枪模过渡突兀、按钮贴图仍是原版、中文环境大量英文、创造模式分类不够细 | `.github/prompts/tacz-stage-client-ux-gui-i18n.prompt.md` | `TACZ Migration` | 给 Client UX Agent 使用，重点做 `GunRefitScreen` / `GunSmithTableScreen` 视觉复刻、world-to-screen 枪模过渡、I18n 语言源修正、tooltip/HUD 文案清理，以及创造模式分类按上游真值细分 |
+| 爆发模式射速不对、普通枪伤害/子弹真值异常、RPG/榴弹爆炸行为不对 | `.github/prompts/tacz-migrate-combat-network.prompt.md` | `TACZ Migration` | 给 combat Agent 使用，重点修 fire mode cadence、服务端裁决、projectile / damage / explosion 真值，不把手感问题误甩给渲染 |
 | client mixin 未激活、renderer / GUI 注册缺失、smoke 被共享基础问题阻断 | `.github/prompts/tacz-stage-foundation-client-hooks.prompt.md` | `TACZ Migration` | 给基建 Agent 使用，只做共享 hook / 注册 / smoke 守门修复，不越界接管业务 feature |
 
 ### 本阶段推荐执行顺序
@@ -194,12 +226,14 @@
 1. **渲染 Agent — 材质/物品/方块表现收口**
    - 先解决“看得见但不对”的贴图 / item / block display 问题。
 2. **渲染 Agent — 动画/第一人称/声音收口**
-   - 再解决动画 runtime、声音与 hand/scope 链路。
+   - 再解决动画 runtime、hand/scope 链路、ADS 插值、枪焰/镜头/后坐力等第一人称反馈；声音播放 backend 本体交给音频 Agent。
 3. **音频 Agent — 专用音频引擎 / smoke 兼容守门**
-   - 当症状已经上升为“音频资源格式不兼容、原版声音栈卡住 focused smoke、需要 null backend / preflight / 专用 runtime”时，单独使用音频 Prompt，不再把问题继续塞给渲染 Agent。
+   - 当症状已经上升为“武器完全没音效 / 音频资源格式不兼容 / 原版声音栈卡住 focused smoke / 需要 null backend / preflight / 专用 runtime”时，单独使用音频 Prompt，不再把问题继续塞给渲染 Agent。
 4. **Client UX Agent — GUI 样式与 I18n 收尾**
-   - 在真实 backend 已接通的前提下补视觉与语言一致性。
-5. **基建 Agent — 共享接线与 smoke 守门**
+   - 在真实 backend 已接通的前提下补视觉与语言一致性，重点收 `GunRefitScreen` 的沉浸式预览与 world-to-screen 枪模过渡。
+5. **Combat Agent — 射击 cadence / 伤害 / 爆炸真值收口**
+   - 重点处理 burst 射速错误、普通枪伤害不对与 RPG/榴弹的剩余真值偏差。
+6. **基建 Agent — 共享接线与 smoke 守门**
    - 只在前面几条被共享基础问题挡住时介入。
 
 ### 本阶段并行协作建议

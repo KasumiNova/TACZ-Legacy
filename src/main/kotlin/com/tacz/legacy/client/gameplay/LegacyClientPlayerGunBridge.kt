@@ -25,6 +25,7 @@ import com.tacz.legacy.common.config.InteractKeyConfigRead
 import net.minecraft.client.Minecraft
 import net.minecraft.client.entity.EntityPlayerSP
 import net.minecraft.entity.EntityList
+import net.minecraft.item.ItemStack
 import net.minecraft.util.EnumActionResult
 import net.minecraft.util.EnumHand
 import net.minecraft.util.math.RayTraceResult
@@ -32,6 +33,7 @@ import net.minecraft.util.text.TextComponentTranslation
 
 internal object LegacyClientPlayerGunBridge {
     private var lastHeldGunSignature: String? = null
+    private var lastHeldGunStack: ItemStack? = null
     private var lastShootSuccess: Boolean = false
     private var lastShootKeyDown: Boolean = false
     private var lastSprinting: Boolean = false
@@ -79,10 +81,12 @@ internal object LegacyClientPlayerGunBridge {
     private fun syncHeldGun(player: EntityPlayerSP, operator: IGunOperator): Unit {
         if (!IGun.mainHandHoldGun(player)) {
             if (lastHeldGunSignature != null) {
+                lastHeldGunStack?.let(LegacyClientGunAnimationDriver::beginPutAway)
                 operator.initialData()
                 operator.getDataHolder().currentGunItem = null
                 LegacyClientShootCoordinator.resetTiming()
                 lastHeldGunSignature = null
+                lastHeldGunStack = null
             }
             return
         }
@@ -95,12 +99,14 @@ internal object LegacyClientPlayerGunBridge {
         }
         val holder = operator.getDataHolder()
         if (signature != lastHeldGunSignature || holder.currentGunItem == null) {
+            lastHeldGunStack?.let(LegacyClientGunAnimationDriver::beginPutAway)
             operator.draw { player.heldItemMainhand }
             TACZNetworkHandler.sendToServer(ClientMessagePlayerDraw())
             LegacyClientGunAnimationDriver.triggerIfInitialized(mainHand, GunAnimationConstant.INPUT_DRAW)
             LegacyClientShootCoordinator.resetTiming()
             lastHeldGunSignature = signature
         }
+        lastHeldGunStack = mainHand.copy()
     }
 
     private fun processSprintReloadCancel(player: EntityPlayerSP, operator: IGunOperator): Unit {
@@ -204,10 +210,23 @@ internal object LegacyClientPlayerGunBridge {
 
     private fun processMeleeInput(player: EntityPlayerSP): Unit {
         while (LegacyKeyBindings.MELEE.isPressed) {
+            val stack = player.heldItemMainhand
             val operator = IGunOperator.fromLivingEntity(player)
-            if (!operator.getSynIsAiming()) {
-                TACZNetworkHandler.sendToServer(ClientMessagePlayerMelee())
+            if (operator.getSynDrawCoolDown() != 0L) {
+                continue
             }
+            if (operator.getSynReloadState().stateType.isReloading()) {
+                continue
+            }
+            if (operator.getSynIsBolting()) {
+                continue
+            }
+            if (operator.getSynMeleeCoolDown() > 0L) {
+                continue
+            }
+            val meleeInput = LegacyClientGunAnimationDriver.determineMeleeInput(stack) ?: continue
+            LegacyClientGunAnimationDriver.triggerIfInitialized(stack, meleeInput)
+            TACZNetworkHandler.sendToServer(ClientMessagePlayerMelee())
         }
     }
 
@@ -331,9 +350,11 @@ internal object LegacyClientPlayerGunBridge {
 
     private fun resetTransientState(): Unit {
         lastHeldGunSignature = null
+        lastHeldGunStack = null
         lastShootSuccess = false
         lastShootKeyDown = false
         lastSprinting = false
         LegacyClientShootCoordinator.resetTiming()
+        LegacyClientGunAnimationDriver.clearTransientState()
     }
 }

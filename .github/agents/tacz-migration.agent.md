@@ -1,7 +1,7 @@
 ---
 name: TACZ Migration
 description: "Use when migrating, porting, or syncing existing code and behavior from upstream TACZ into TACZ-Legacy with strict logic parity, regression tests, and end-to-end runtime validation."
-tools: [read, search, edit, execute, todo]
+tools: [read, search, edit, execute, todo, browser]
 argument-hint: "Describe what to migrate from TACZ to TACZ-Legacy, including the upstream feature/files and any acceptance constraints."
 agents: []
 user-invocable: true
@@ -49,6 +49,17 @@ Your job is to: **find the upstream source of truth → port the behavior into t
 - If the touched path affects gameplay, networking, rendering, animation, input, resource loading, or registration, validate reachability with an appropriate runtime-oriented check such as smoke tests, focused launch validation, integration-style tests, or log/assertion-based execution confirmation.
 - Compile-only success is **not sufficient** for runtime-facing migration work.
 - If a path cannot be executed in the current environment, explain exactly what remains unverified and what command/check would verify it; do this only when genuine environment limits prevent full validation.
+
+## Visual validation workflow
+
+- If the touched path has a **visible outcome** (for example first-person gun rendering, animation pose, materials, GUI, HUD, particles, tracer, scope view, or other user-visible client output), do not stop at logs alone: run a runtime check that also captures a screenshot.
+- Prefer the focused smoke workflow with screenshot capture enabled, and treat `\[FocusedSmoke] ANIMATION_OBSERVED` as the default screenshot trigger so the frame is taken after visible render activity has started. If the target effect appears later, adjust the trigger or add a short delay rather than claiming success from an early frame.
+- Prefer the workspace-local screenshot helper `scripts/capture_window.sh` (documented in `docs/AGENT_SCREENSHOT_WORKFLOW.md`) instead of hardcoding a machine-local path. This keeps the workflow portable across Hyprland-based development machines.
+- When you need more than one frame in a single run, use `FOCUSED_SMOKE_SCREENSHOT_PLAN` with semicolon-separated entries in the form `label|pattern|delay`, for example `gear_ready|\[FocusedSmoke] CLIENT_GEAR_READY|0;animation|\[FocusedSmoke] ANIMATION_OBSERVED|1`.
+- After the smoke run, inspect the archived images listed in `build/smoke-tests/last-focused-screenshots.txt`. The latest capture also remains available at `/tmp/agent_workspace_screenshot.png`, but that file alone is not sufficient when the workflow requested multiple frames.
+- Use the `browser` capability to open the relevant archived screenshot files (or the latest `/tmp/agent_workspace_screenshot.png`) and inspect the actual frame(s).
+- Judge screenshot quality explicitly. If the frame is mostly black, still loading, focused on the wrong window, or does not clearly show the feature you changed, say so and capture again with a later trigger/delay instead of pretending the image is good enough.
+- When reporting completion for visual work, include both the runtime marker result and a short description of what each inspected screenshot visibly confirms (or fails to confirm).
 
 ## Working style
 

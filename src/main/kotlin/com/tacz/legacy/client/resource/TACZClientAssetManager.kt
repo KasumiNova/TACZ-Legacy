@@ -17,6 +17,7 @@ import com.tacz.legacy.client.resource.pojo.animation.bedrock.SoundEffectKeyfram
 import com.tacz.legacy.client.resource.pojo.display.ammo.AmmoDisplay
 import com.tacz.legacy.client.resource.pojo.display.attachment.AttachmentDisplay
 import com.tacz.legacy.client.resource.pojo.display.block.BlockDisplay
+import com.tacz.legacy.client.resource.pojo.display.gun.DefaultAnimationType
 import com.tacz.legacy.client.resource.pojo.display.gun.GunDisplay
 import com.tacz.legacy.client.resource.pojo.model.BedrockModelPOJO
 import com.tacz.legacy.client.resource.pojo.model.BedrockVersion
@@ -58,6 +59,8 @@ import javax.imageio.ImageIO
  */
 internal object TACZClientAssetManager {
     private val MARKER = MarkerManager.getMarker("TACZClientAssets")
+    private val DEFAULT_RIFLE_ANIMATION_ID = ResourceLocation(TACZLegacy.MOD_ID, "rifle_default")
+    private val DEFAULT_PISTOL_ANIMATION_ID = ResourceLocation(TACZLegacy.MOD_ID, "pistol_default")
 
     private val MODEL_GSON = GsonBuilder()
         .registerTypeAdapter(CubesItem::class.java, CubesItem.Deserializer())
@@ -162,6 +165,12 @@ internal object TACZClientAssetManager {
             display.gunLod?.modelLocation?.let(neededModels::add)
             display.gunLod?.modelTexture?.let(neededTextures::add)
             display.animationLocation?.let(neededAnimations::add)
+            display.defaultAnimation?.let(neededAnimations::add)
+            when (display.defaultAnimationType) {
+                DefaultAnimationType.RIFLE -> neededAnimations.add(DEFAULT_RIFLE_ANIMATION_ID)
+                DefaultAnimationType.PISTOL -> neededAnimations.add(DEFAULT_PISTOL_ANIMATION_ID)
+                null -> Unit
+            }
             display.slotTextureLocation?.let(neededTextures::add)
             display.hudTextureLocation?.let(neededTextures::add)
             display.hudEmptyTextureLocation?.let(neededTextures::add)
@@ -196,6 +205,7 @@ internal object TACZClientAssetManager {
         for (pack in snapshot.packs.values) {
             loadAssetsFromPack(pack.sourceFile, neededModels, neededTextures, neededAnimations, neededScripts)
         }
+        loadAssetsFromClasspath(neededModels, neededTextures, neededAnimations, neededScripts)
 
         // Resolve scripts with dependency-aware retry (scripts use require() to reference each other)
         resolveAllScripts()
@@ -358,6 +368,45 @@ internal object TACZClientAssetManager {
             loadFromZip(packFile, neededModels, neededTextures, neededAnimations, neededScripts)
         }
     }
+
+    private fun loadAssetsFromClasspath(
+        neededModels: Set<ResourceLocation>,
+        neededTextures: Set<ResourceLocation>,
+        neededAnimations: Set<ResourceLocation>,
+        neededScripts: Set<ResourceLocation>,
+    ) {
+        for (modelLoc in neededModels) {
+            if (models.containsKey(modelLoc)) continue
+            val resourcePath = "assets/${modelLoc.namespace}/geo_models/${modelLoc.path}.json"
+            openClasspathResource(resourcePath)?.bufferedReader(StandardCharsets.UTF_8)?.use { reader ->
+                loadModelFromJson(modelLoc, reader.readText())
+            }
+        }
+        for (texLoc in neededTextures) {
+            if (textures.containsKey(texLoc)) continue
+            val resourcePath = "assets/${texLoc.namespace}/${texLoc.path}"
+            openClasspathResource(resourcePath)?.use { stream ->
+                loadTextureFromStream(texLoc, stream)
+            }
+        }
+        for (animLoc in neededAnimations) {
+            if (animations.containsKey(animLoc)) continue
+            val resourcePath = "assets/${animLoc.namespace}/animations/${animLoc.path}.animation.json"
+            openClasspathResource(resourcePath)?.bufferedReader(StandardCharsets.UTF_8)?.use { reader ->
+                loadAnimationFromJson(animLoc, reader.readText())
+            }
+        }
+        for (scriptLoc in neededScripts) {
+            if (pendingScriptSources.containsKey(scriptLoc) || scripts.containsKey(scriptLoc)) continue
+            val resourcePath = "assets/${scriptLoc.namespace}/scripts/${scriptLoc.path}.lua"
+            openClasspathResource(resourcePath)?.bufferedReader(StandardCharsets.UTF_8)?.use { reader ->
+                pendingScriptSources[scriptLoc] = reader.readText()
+            }
+        }
+    }
+
+    private fun openClasspathResource(path: String): InputStream? =
+        TACZClientAssetManager::class.java.classLoader.getResourceAsStream(path)
 
     // ------ ZIP loading ------
 

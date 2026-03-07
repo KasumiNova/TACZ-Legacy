@@ -31,6 +31,41 @@
 - decode / normalize / cache 主链
 - 对剩余不兼容 / 缺失音频资源的分类处置策略
 
+### 新一轮实机对比结论（2026-03-08）
+
+针对“**武器没音效**”这一轮反馈，已经额外做了两类验证：
+
+1. **focused smoke / diagnostic**：用于证明请求是否真的提交到了 `TACZAudioRuntime`
+2. **focused smoke / legacy-minecraft**：用于证明默认可听后端当前到底是“没接到请求”，还是“接到了请求但旧后端仍可能失败”
+
+结论已经比较明确：
+
+- **默认客户端在未显式设置 `tacz.audio.backend` 时，当前仍跑 `legacy-minecraft` backend。**
+- **“没音效”并不等于请求没有提交到 runtime。** 最新日志 `build/smoke-tests/runclient-focused-smoke-20260308-032140.log` 已证明：
+   - `ServerMessageSound` 的合成广播请求 `tacz:hk_mp5a5/hk_mp5a5_shoot` 已进入 `TACZAudioRuntime`，并被提交到 `legacy-minecraft` backend。
+   - 动画音效请求 `minecraft:rpg7_reload_lower` 也已进入 `TACZAudioRuntime`，说明 animation / network 两条入口都已经统一接到了 runtime。
+- **当前真正的问题点在默认 playback backend 仍是旧 `SoundHandler` 路径，而且它会直接暴露资源缺失/旧解码链问题。** 同一份 `legacy-minecraft` smoke 日志里，`minecraft:rpg7_reload_lower` 在提交给原版声音栈后触发了：
+   - `SoundManager`: `Error in class 'CodecJOrbis'`
+   - `Unable to acquire inputstream in method 'initialize'`
+   - 随后 `runClient` 以 `137` 退出
+- `rpg7_reload_lower` 不是本轮 runtime 接线引入的新名字；它在上游 `TACZ` 的 `rpg7.animation.json` 中同样存在，但当前上下游资源树里都找不到对应的真实 `ogg`。这说明这里至少包含一类**上游内容/命名侧的缺失音频引用**，而不是单纯的 Legacy 运行时没接上。
+
+换句话说，本轮已经把“**请求有没有到 runtime**”这个问题回答清楚了：**到了**。现在剩下的核心问题是：
+
+- 默认客户端仍然依赖 `legacy-minecraft` 可听后端；
+- 该后端对缺失/不兼容资源仍会直接掉进 `SoundHandler + CodecJOrbis` 老链路；
+- dedicated backend 尚未落地之前，真实可听播放仍会被这条旧链路和资源缺失问题卡住。
+
+### 提交状态语义约定
+
+为避免诊断输出误导，runtime 记录里的提交状态现约定为：
+
+- `SUBMITTED_TO_BACKEND`：请求已交给某个 playback backend；**这不是“已经被人耳确认听到”的证明**
+- `RECORDED_ONLY`：仅记录/预检，不尝试真实播放（`diagnostic` / `null`）
+- `DROPPED`：运行时未能交给后端
+
+这一区分很重要：它让 focused smoke 能明确回答“runtime 有没有收到请求”，同时避免把 legacy `SoundHandler` 下游的异步失败误记成“已播出”。
+
 也就是说：本阶段已经把“音频链会不会拖死 smoke、能不能先诊断清楚”解决到可控状态；但“完全脱离原版声音系统的可听专用播放后端”仍是下一阶段工作。
 
 ## 设计目标

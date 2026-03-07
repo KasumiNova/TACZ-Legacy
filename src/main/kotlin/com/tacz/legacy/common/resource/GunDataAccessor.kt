@@ -2,6 +2,7 @@ package com.tacz.legacy.common.resource
 
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import com.tacz.legacy.api.DefaultAssets
 import net.minecraft.util.ResourceLocation
 
 private fun JsonObject.safeGetObject(key: String): JsonObject? =
@@ -23,6 +24,15 @@ public object GunDataAccessor {
     public fun getGunData(gunId: ResourceLocation): GunCombatData? {
         val gun = TACZGunPackRuntimeRegistry.getSnapshot().guns[gunId] ?: return null
         return GunCombatData.fromRawJson(gun.data.raw, gun.data)
+    }
+
+    @JvmStatic
+    public fun getAttachmentMeleeData(attachmentId: ResourceLocation): AttachmentMeleeCombatData? {
+        if (attachmentId == DefaultAssets.EMPTY_ATTACHMENT_ID) {
+            return null
+        }
+        val attachment = TACZGunPackRuntimeRegistry.getSnapshot().attachments[attachmentId] ?: return null
+        return AttachmentMeleeCombatData.fromRawJson(attachment.data.raw)
     }
 }
 
@@ -105,11 +115,15 @@ public class GunCombatData private constructor(
                 val defaultObj = meleeObj.safeGetObject("default")
                 val defaultData = if (defaultObj != null) {
                     GunDefaultMeleeCombatData(
-                        prepTime = defaultObj.getAsJsonPrimitive("prep_time")?.asFloat ?: 0.0f,
+                        animationType = defaultObj.getAsJsonPrimitive("animation_type")?.asString ?: "melee_push",
+                        prepTime = defaultObj.getAsJsonPrimitive("prep")?.asFloat
+                            ?: defaultObj.getAsJsonPrimitive("prep_time")?.asFloat
+                            ?: 0.0f,
                         cooldown = defaultObj.getAsJsonPrimitive("cooldown")?.asFloat ?: 0.3f,
                         damage = defaultObj.getAsJsonPrimitive("damage")?.asFloat ?: 1.0f,
                         distance = defaultObj.getAsJsonPrimitive("distance")?.asFloat ?: 2.0f,
                         rangeAngle = defaultObj.getAsJsonPrimitive("range_angle")?.asFloat ?: 30.0f,
+                        knockback = defaultObj.getAsJsonPrimitive("knockback")?.asFloat ?: 0.0f,
                     )
                 } else null
                 GunMeleeCombatData(cooldown = cooldown, defaultMeleeData = defaultData)
@@ -212,12 +226,37 @@ public class GunMeleeCombatData(
 )
 
 public class GunDefaultMeleeCombatData(
+    public val animationType: String,
     public val prepTime: Float,
     public val cooldown: Float,
     public val damage: Float,
     public val distance: Float,
     public val rangeAngle: Float,
+    public val knockback: Float,
 )
+
+public class AttachmentMeleeCombatData(
+    public val prepTime: Float,
+    public val cooldown: Float,
+    public val damage: Float,
+    public val distance: Float,
+    public val rangeAngle: Float,
+    public val knockback: Float,
+) {
+    public companion object {
+        internal fun fromRawJson(raw: JsonObject): AttachmentMeleeCombatData? {
+            val melee = raw.safeGetObject("melee") ?: return null
+            return AttachmentMeleeCombatData(
+                prepTime = melee.getAsJsonPrimitive("prep")?.asFloat ?: 0.0f,
+                cooldown = melee.getAsJsonPrimitive("cooldown")?.asFloat ?: 0.0f,
+                damage = melee.getAsJsonPrimitive("damage")?.asFloat ?: 0.0f,
+                distance = melee.getAsJsonPrimitive("distance")?.asFloat ?: 0.0f,
+                rangeAngle = melee.getAsJsonPrimitive("range_angle")?.asFloat ?: 0.0f,
+                knockback = melee.getAsJsonPrimitive("knockback")?.asFloat ?: 0.0f,
+            )
+        }
+    }
+}
 
 /**
  * 子弹战斗参数。对应上游 TACZ BulletData 结构。

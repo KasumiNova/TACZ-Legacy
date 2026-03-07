@@ -15,8 +15,12 @@ import com.tacz.legacy.client.resource.GunDisplayInstance
 import com.tacz.legacy.client.resource.TACZClientAssetManager
 import com.tacz.legacy.common.resource.TACZGunPackPresentation
 import com.tacz.legacy.common.resource.TACZGunPackRuntimeRegistry
+import com.tacz.legacy.util.math.Easing
 import com.tacz.legacy.util.math.MathUtil
+import com.tacz.legacy.util.math.PerlinNoise
+import com.tacz.legacy.util.math.SecondOrderDynamics
 import net.minecraft.client.Minecraft
+import net.minecraft.client.entity.EntityPlayerSP
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.util.EnumHand
 import net.minecraft.util.EnumHandSide
@@ -25,10 +29,12 @@ import net.minecraft.util.math.MathHelper
 import net.minecraftforge.client.event.EntityViewRenderEvent
 import net.minecraftforge.client.event.RenderSpecificHandEvent
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
+import net.minecraftforge.fml.common.gameevent.TickEvent
 import net.minecraftforge.fml.relauncher.Side
 import net.minecraftforge.fml.relauncher.SideOnly
 import org.joml.Matrix4f
 import org.joml.Quaternionf
+import org.joml.Vector3f
 import org.lwjgl.BufferUtils
 import org.lwjgl.opengl.GL11
 import java.nio.FloatBuffer
@@ -47,6 +53,36 @@ internal object FirstPersonRenderGunEvent {
     private val positioningMatrixBuffer: FloatBuffer = BufferUtils.createFloatBuffer(16)
     private var loggedFirstPersonRender = false
 
+    // --- Procedural animation state (port of upstream FirstPersonRenderGunEvent) ---
+    // SecondOrderDynamics for smooth aim transition
+    private val aimingDynamics = SecondOrderDynamics(1.2f, 1.2f, 0.5f, 0f)
+    // Jumping sway dynamics
+    private val jumpingDynamics = SecondOrderDynamics(0.28f, 1f, 0.65f, 0f)
+    private const val JUMPING_Y_SWAY = -2f
+    private const val JUMPING_SWAY_TIME = 0.3f
+    private const val LANDING_SWAY_TIME = 0.15f
+    private var jumpingSwayProgress = 0f
+    private var lastOnGround = false
+    private var jumpingTimeStamp = -1L
+
+    // Shoot recoil/sway state
+    private val shootXSwayNoise = PerlinNoise(-0.2f, 0.2f, 400)
+    private val shootYRotationNoise = PerlinNoise(-0.0136f, 0.0136f, 100)
+    private const val SHOOT_Y_SWAY = -0.1f
+    private const val SHOOT_ANIMATION_TIME = 0.3f
+    @JvmStatic @Volatile
+    internal var shootTimeStamp = -1L
+        private set
+
+    /**
+     * Called when the local player fires. Records the timestamp so the shoot
+     * procedural-recoil animation can phase in.
+     */
+    @JvmStatic
+    fun onShoot() {
+        shootTimeStamp = System.currentTimeMillis()
+    }
+
     @SubscribeEvent
     @JvmStatic
     internal fun onRenderHand(event: RenderSpecificHandEvent) {
@@ -54,7 +90,6 @@ internal object FirstPersonRenderGunEvent {
 
         // Only handle main hand
         if (event.hand != EnumHand.MAIN_HAND) {
-            // If main hand has gun, cancel off-hand rendering too
             val mainItem = player.heldItemMainhand
             if (mainItem.item is IGun) {
                 event.isCanceled = true
@@ -64,9 +99,6 @@ internal object FirstPersonRenderGunEvent {
 
         val stack = event.itemStack
         val iGun = stack.item as? IGun ?: run {
-            if (lastStateMachine?.isInitialized == true) {
-                lastStateMachine?.exit()
-            }
             lastStateMachine = null
             lastRenderedModel = null
             return
@@ -90,12 +122,7 @@ internal object FirstPersonRenderGunEvent {
         // --- State machine lifecycle ---
         val sm: LuaAnimationStateMachine<GunAnimationStateContext>? = displayInstance.animationStateMachine
 
-        // Exit previous state machine if switching guns
         if (sm != lastStateMachine) {
-            val prev = lastStateMachine
-            if (prev != null && prev.isInitialized) {
-                prev.exit()
-            }
             lastStateMachine = sm
         }
 
@@ -112,14 +139,28 @@ internal object FirstPersonRenderGunEvent {
             sm.update()
         }
 
+        // --- Compute aiming progress with SecondOrderDynamics smoothing ---
+        val rawAimingProgress = IGunOperator.fromLivingEntity(player).getSynAimingProgress()
+        val aimingProgress = aimingDynamics.update(rawAimingProgress)
+
+        // --- Apply procedural gun movements (shoot sway + jump sway) to root node ---
+        applyGunMovements(model, aimingProgress, partialTicks)
+
         // --- Render ---
         lastRenderedModel = model
         GlStateManager.pushMatrix()
         applyVanillaFirstPersonTransform(handSide, event.equipProgress, event.swingProgress)
 
-        // Apply root node offsets for view bob compensation
-        val xRot = event.interpolatedPitch
-        val yRot = player.prevRotationYaw + (player.rotationYaw - player.prevRotationYaw) * partialTicks
+        // Apply view bob compensation — upstream subtracts xBob/yBob lerp from
+        // raw view angles; on 1.12 the equivalents are renderArmPitch / renderArmYaw.
+        val xBob = player.prevRenderArmPitch + (player.renderArmPitch - player.prevRenderArmPitch) * partialTicks
+        val yBob = player.prevRenderArmYaw + (player.renderArmYaw - player.prevRenderArmYaw) * partialTicks
+        val xRot = player.prevRotationPitch + (player.rotationPitch - player.prevRotationPitch) * partialTicks - xBob
+        val yRot = player.prevRotationYaw + (player.rotationYaw - player.prevRotationYaw) * partialTicks - yBob
+
+        // Apply view-rotation-driven tilt to poseStack (matches upstream poseStack.mulPose step)
+        GlStateManager.rotate(xRot * -0.1f, 1.0f, 0.0f, 0.0f)
+        GlStateManager.rotate(yRot * -0.1f, 0.0f, 1.0f, 0.0f)
 
         val rootNode: BedrockPart? = model.rootNode
         if (rootNode != null) {
@@ -139,10 +180,9 @@ internal object FirstPersonRenderGunEvent {
         GlStateManager.translate(0.0f, 1.5f, 0.0f)
         // Bedrock models are upside-down, flip
         GlStateManager.rotate(180.0f, 0.0f, 0.0f, 1.0f)
-        // Apply idle/iron/scope positioning so the gun and mounted optics sit in the
-        // correct place relative to the camera instead of rendering at the raw model origin.
-        val aimingProgress = IGunOperator.fromLivingEntity(player).getSynAimingProgress()
+        // Apply idle/aiming positioning + animation constraint
         applyFirstPersonPositioningTransform(model, stack, aimingProgress)
+        applyAnimationConstraintTransform(model, aimingProgress)
 
         // Bind gun texture and render
         Minecraft.getMinecraft().textureManager.bindTexture(registeredTexture)
@@ -163,8 +203,8 @@ internal object FirstPersonRenderGunEvent {
             loggedFirstPersonRender = true
         }
 
-    model.render(stack)
-    model.renderHand = false
+        model.render(stack)
+        model.renderHand = false
 
         GlStateManager.disableBlend()
         GlStateManager.disableRescaleNormal()
@@ -177,6 +217,191 @@ internal object FirstPersonRenderGunEvent {
 
         // Cancel vanilla rendering
         event.isCanceled = true
+    }
+
+    // ---- Procedural animation helpers (port of upstream) ----
+
+    private fun applyGunMovements(model: BedrockGunModel, aimingProgress: Float, partialTicks: Float) {
+        applyShootSwayAndRotation(model, aimingProgress)
+        applyJumpingSway(model, partialTicks)
+    }
+
+    /**
+     * Port of upstream applyShootSwayAndRotation — adds horizontal noise offset and vertical
+     * kick plus yaw rotation noise to the root node when the player fires.
+     */
+    private fun applyShootSwayAndRotation(model: BedrockGunModel, aimingProgress: Float) {
+        val rootNode = model.rootNode ?: return
+        var progress = 1f - (System.currentTimeMillis() - shootTimeStamp) / (SHOOT_ANIMATION_TIME * 1000f)
+        if (progress < 0f) progress = 0f
+        progress = Easing.easeOutCubic(progress.toDouble()).toFloat()
+        rootNode.offsetX += shootXSwayNoise.value / 16f * progress * (1f - aimingProgress)
+        // Bedrock model Y axis is inverted, negate sway
+        rootNode.offsetY += -SHOOT_Y_SWAY / 16f * progress * (1f - aimingProgress)
+        rootNode.additionalQuaternion.mul(
+            Quaternionf().rotateY(shootYRotationNoise.value * progress)
+        )
+    }
+
+    /**
+     * Port of upstream applyJumpingSway — smoothed vertical root node offset when
+     * jumping/landing.
+     */
+    private fun applyJumpingSway(model: BedrockGunModel, partialTicks: Float) {
+        if (jumpingTimeStamp == -1L) {
+            jumpingTimeStamp = System.currentTimeMillis()
+        }
+        val player = Minecraft.getMinecraft().player
+        if (player != null) {
+            val posY = MathHelper.clampedLerp(player.lastTickPosY, player.posY, partialTicks.toDouble())
+            val velocityY = ((posY - player.lastTickPosY) / partialTicks).toFloat()
+            if (player.onGround) {
+                if (!lastOnGround) {
+                    jumpingSwayProgress = velocityY / -0.1f
+                    if (jumpingSwayProgress > 1f) jumpingSwayProgress = 1f
+                    lastOnGround = true
+                } else {
+                    jumpingSwayProgress -= (System.currentTimeMillis() - jumpingTimeStamp) / (LANDING_SWAY_TIME * 1000f)
+                    if (jumpingSwayProgress < 0f) jumpingSwayProgress = 0f
+                }
+            } else {
+                if (lastOnGround) {
+                    // 0.42 is vanilla jump velocity
+                    jumpingSwayProgress = velocityY / 0.42f
+                    if (jumpingSwayProgress > 1f) jumpingSwayProgress = 1f
+                    lastOnGround = false
+                } else {
+                    jumpingSwayProgress -= (System.currentTimeMillis() - jumpingTimeStamp) / (JUMPING_SWAY_TIME * 1000f)
+                    if (jumpingSwayProgress < 0f) jumpingSwayProgress = 0f
+                }
+            }
+        }
+        jumpingTimeStamp = System.currentTimeMillis()
+        val ySway = jumpingDynamics.update(JUMPING_Y_SWAY * jumpingSwayProgress)
+        val rootNode = model.rootNode
+        if (rootNode != null) {
+            // Bedrock model Y axis is inverted, negate sway
+            rootNode.offsetY += -ySway / 16f
+        }
+    }
+
+    // ---- Animation constraint transform (port of upstream) ----
+
+    /**
+     * Port of upstream applyAnimationConstraintTransform — uses the constraint node path
+     * and constraint coefficients to counteract animation-driven movement, keeping the gun
+     * stable when aiming.
+     */
+    private fun applyAnimationConstraintTransform(model: BedrockGunModel, aimingProgress: Float) {
+        val nodePath = model.constraintPath ?: return
+        val constraintObj = model.constraintObject ?: return
+        val weight = aimingProgress
+
+        val originTranslation = Vector3f()
+        val animatedTranslation = Vector3f()
+        val rotation = Vector3f()
+        getAnimationConstraintTransform(nodePath, originTranslation, animatedTranslation, rotation)
+
+        val translationICA = constraintObj.translationConstraint
+        val rotationICA = constraintObj.rotationConstraint
+
+        // Compute inverse translation needed to counteract constraint movement
+        val inverseTranslation = Vector3f(originTranslation).sub(animatedTranslation)
+        // We need to transform through the current GL matrix. Since we're using
+        // old-style GL, we read the current modelview matrix and apply mulDirection.
+        val mvBuf = BufferUtils.createFloatBuffer(16)
+        GL11.glGetFloat(GL11.GL_MODELVIEW_MATRIX, mvBuf)
+        val mvMatrix = Matrix4f()
+        mvMatrix.set(mvBuf)
+        inverseTranslation.mulDirection(mvMatrix)
+        // Bedrock model xy are inverted for rotation, so flip
+        inverseTranslation.mul(translationICA.x() - 1f, translationICA.y() - 1f, 1f - translationICA.z())
+
+        // Compute inverse rotation
+        val inverseRotation = Vector3f(rotation)
+        inverseRotation.mul(rotationICA.x() - 1f, rotationICA.y() - 1f, rotationICA.z() - 1f)
+
+        // Apply constraint rotation
+        GlStateManager.translate(animatedTranslation.x(), animatedTranslation.y() + 1.5f, animatedTranslation.z())
+        GlStateManager.rotate(Math.toDegrees(inverseRotation.x().toDouble()).toFloat() * weight, 1f, 0f, 0f)
+        GlStateManager.rotate(Math.toDegrees(inverseRotation.y().toDouble()).toFloat() * weight, 0f, 1f, 0f)
+        GlStateManager.rotate(Math.toDegrees(inverseRotation.z().toDouble()).toFloat() * weight, 0f, 0f, 1f)
+        GlStateManager.translate(-animatedTranslation.x(), -animatedTranslation.y() - 1.5f, -animatedTranslation.z())
+
+        // Apply constraint translation — modify the current modelview matrix directly
+        val mvBuf2 = BufferUtils.createFloatBuffer(16)
+        GL11.glGetFloat(GL11.GL_MODELVIEW_MATRIX, mvBuf2)
+        val poseMatrix = Matrix4f()
+        poseMatrix.set(mvBuf2)
+        poseMatrix.m30(poseMatrix.m30() - inverseTranslation.x() * weight)
+        poseMatrix.m31(poseMatrix.m31() - inverseTranslation.y() * weight)
+        poseMatrix.m32(poseMatrix.m32() + inverseTranslation.z() * weight)
+        GL11.glLoadIdentity()
+        val outBuf = BufferUtils.createFloatBuffer(16)
+        poseMatrix.get(outBuf)
+        outBuf.rewind()
+        GL11.glMultMatrix(outBuf)
+    }
+
+    private fun getAnimationConstraintTransform(
+        nodePath: List<BedrockPart>,
+        originTranslation: Vector3f,
+        animatedTranslation: Vector3f,
+        rotation: Vector3f,
+    ) {
+        val animeMatrix = Matrix4f().identity()
+        val originMatrix = Matrix4f().identity()
+        val constrainNode = nodePath[nodePath.size - 1]
+        for (part in nodePath) {
+            // Animated translation (skip constraint node itself)
+            if (part !== constrainNode) {
+                animeMatrix.translate(part.offsetX, part.offsetY, part.offsetZ)
+            }
+            // Group translation
+            if (part.parent != null) {
+                animeMatrix.translate(part.x / 16.0f, part.y / 16.0f, part.z / 16.0f)
+            } else {
+                animeMatrix.translate(part.x / 16.0f, part.y / 16.0f - 1.5f, part.z / 16.0f)
+            }
+            // Animated rotation (skip constraint node itself)
+            if (part !== constrainNode) {
+                animeMatrix.rotate(part.additionalQuaternion)
+            }
+            // Group rotation
+            animeMatrix.rotateZ(part.zRot)
+            animeMatrix.rotateY(part.yRot)
+            animeMatrix.rotateX(part.xRot)
+
+            // Origin matrix (no animation offsets)
+            if (part.parent != null) {
+                originMatrix.translate(part.x / 16.0f, part.y / 16.0f, part.z / 16.0f)
+            } else {
+                originMatrix.translate(part.x / 16.0f, part.y / 16.0f - 1.5f, part.z / 16.0f)
+            }
+            originMatrix.rotateZ(part.zRot)
+            originMatrix.rotateY(part.yRot)
+            originMatrix.rotateX(part.xRot)
+        }
+        animeMatrix.getTranslation(animatedTranslation)
+        originMatrix.getTranslation(originTranslation)
+        val animatedRotation = MathUtil.getEulerAngles(animeMatrix)
+        val originRotation = MathUtil.getEulerAngles(originMatrix)
+        animatedRotation.sub(originRotation)
+        rotation.set(animatedRotation.x(), animatedRotation.y(), animatedRotation.z())
+    }
+
+    @SubscribeEvent
+    @JvmStatic
+    internal fun onRenderTick(event: TickEvent.RenderTickEvent) {
+        if (event.phase != TickEvent.Phase.START) {
+            return
+        }
+        val mc = Minecraft.getMinecraft()
+        val player = mc.player ?: return
+        if (mc.gameSettings.thirdPersonView != 0) {
+            LegacyClientGunAnimationDriver.visualUpdateHeldGun(player, event.renderTickTime)
+        }
+        LegacyClientGunAnimationDriver.visualUpdateExitingAnimation(event.renderTickTime)
     }
 
     private fun applyVanillaFirstPersonTransform(handSide: EnumHandSide, equipProgress: Float, swingProgress: Float) {
@@ -206,11 +431,21 @@ internal object FirstPersonRenderGunEvent {
     }
 
     private fun applyFirstPersonPositioningTransform(model: BedrockGunModel, stack: net.minecraft.item.ItemStack, aimingProgress: Float) {
-        val transformMatrix = FirstPersonRenderMatrices.buildAimingPositioningTransform(
-            idlePath = FirstPersonRenderMatrices.fromBedrockPath(model.idleSightPath),
-            aimingPath = FirstPersonRenderMatrices.fromBedrockPath(model.resolveAimingViewPath(stack)),
-            aimingProgress = aimingProgress,
+        val transformMatrix = Matrix4f().identity()
+        val idlePath = model.idleSightPath
+        val aimingPath = model.resolveAimingViewPath(stack)
+
+        val idleViewMatrix = FirstPersonRenderMatrices.buildPositioningNodeInverse(
+            FirstPersonRenderMatrices.fromBedrockPath(idlePath)
         )
+        val aimingViewMatrix = FirstPersonRenderMatrices.buildPositioningNodeInverse(
+            FirstPersonRenderMatrices.fromBedrockPath(aimingPath)
+        )
+        // Apply idle positioning (weight = 1)
+        MathUtil.applyMatrixLerp(transformMatrix, idleViewMatrix, transformMatrix, 1f)
+        // Blend towards aiming positioning
+        MathUtil.applyMatrixLerp(transformMatrix, aimingViewMatrix, transformMatrix, aimingProgress)
+
         GlStateManager.translate(0.0f, 1.5f, 0.0f)
         positioningMatrixBuffer.clear()
         transformMatrix.get(positioningMatrixBuffer)

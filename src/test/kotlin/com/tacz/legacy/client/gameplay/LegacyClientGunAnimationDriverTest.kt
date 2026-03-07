@@ -71,6 +71,49 @@ class LegacyClientGunAnimationDriverTest {
     }
 
     @Test
+    fun `resolveMeleeAnimationInput matches upstream muzzle stock push priority`() {
+        assertEquals(
+            GunAnimationConstant.INPUT_BAYONET_MUZZLE,
+            LegacyClientGunAnimationDriver.resolveMeleeAnimationInput(
+                hasMuzzleMelee = true,
+                hasStockMelee = true,
+                defaultAnimationType = "melee_stock",
+            ),
+        )
+        assertEquals(
+            GunAnimationConstant.INPUT_BAYONET_STOCK,
+            LegacyClientGunAnimationDriver.resolveMeleeAnimationInput(
+                hasMuzzleMelee = false,
+                hasStockMelee = true,
+                defaultAnimationType = "melee_push",
+            ),
+        )
+        assertEquals(
+            GunAnimationConstant.INPUT_BAYONET_STOCK,
+            LegacyClientGunAnimationDriver.resolveMeleeAnimationInput(
+                hasMuzzleMelee = false,
+                hasStockMelee = false,
+                defaultAnimationType = "melee_stock",
+            ),
+        )
+        assertEquals(
+            GunAnimationConstant.INPUT_BAYONET_PUSH,
+            LegacyClientGunAnimationDriver.resolveMeleeAnimationInput(
+                hasMuzzleMelee = false,
+                hasStockMelee = false,
+                defaultAnimationType = "melee_push",
+            ),
+        )
+        assertNull(
+            LegacyClientGunAnimationDriver.resolveMeleeAnimationInput(
+                hasMuzzleMelee = false,
+                hasStockMelee = false,
+                defaultAnimationType = null,
+            ),
+        )
+    }
+
+    @Test
     fun `trigger starts animation runner through state transition`() {
         Bootstrap.register()
         val controller = createAnimationController(AnimationListenerSupplier { _, _ -> null })

@@ -1,5 +1,6 @@
 package com.tacz.legacy.client.resource.pojo.display.gun;
 
+import com.google.common.collect.Maps;
 import com.google.gson.annotations.SerializedName;
 import net.minecraft.util.ResourceLocation;
 
@@ -76,6 +77,8 @@ public class GunDisplay {
     private MuzzleFlash muzzleFlash;
     @SerializedName("show_crosshair")
     private boolean showCrosshair = false;
+    @SerializedName("text_show")
+    private Map<String, TextShow> textShows = Maps.newHashMap();
 
     public String getModelType() {
         return modelType;
@@ -183,6 +186,10 @@ public class GunDisplay {
 
     public boolean isShowCrosshair() {
         return showCrosshair;
+    }
+
+    public Map<String, TextShow> getTextShows() {
+        return textShows;
     }
 
     /**

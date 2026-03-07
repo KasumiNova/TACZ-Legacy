@@ -1,6 +1,7 @@
 package com.tacz.legacy.util.math;
 
 import net.minecraft.util.math.MathHelper;
+import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
@@ -332,5 +333,67 @@ public class MathUtil {
                 multiplier
         );
         return new Quaternionf(arr[0], arr[1], arr[2], arr[3]);
+    }
+
+    public static Vector3f getEulerAngles(Matrix4f matrix) {
+        Vector3f dest = new Vector3f();
+        matrix.getEulerAnglesZYX(dest);
+        return dest;
+    }
+
+    public static float[] solveEquations(float[][] coefficients, float[] constants) {
+        int n = constants.length;
+        for (int pivot = 0; pivot < n - 1; pivot++) {
+            for (int row = pivot + 1; row < n; row++) {
+                float factor = coefficients[row][pivot] / coefficients[pivot][pivot];
+                for (int col = pivot; col < n; col++) {
+                    coefficients[row][col] -= coefficients[pivot][col] * factor;
+                }
+                constants[row] -= constants[pivot] * factor;
+            }
+        }
+        float[] solution = new float[n];
+        for (int i = n - 1; i >= 0; i--) {
+            float sum = 0.0f;
+            for (int j = i + 1; j < n; j++) {
+                sum += coefficients[i][j] * solution[j];
+            }
+            solution[i] = (constants[i] - sum) / coefficients[i][i];
+        }
+        return solution;
+    }
+
+    public static float[] getRelativeQuaternion(float[] qa, float[] qb) {
+        float[][] coefficients = {
+                {qa[3], -qa[2], qa[1], qa[0]},
+                {qa[2], qa[3], -qa[0], qa[1]},
+                {-qa[1], qa[0], qa[3], qa[2]},
+                {-qa[0], -qa[1], -qa[2], qa[3]},
+        };
+        float[] constants = {qb[0], qb[1], qb[2], qb[3]};
+        return solveEquations(coefficients, constants);
+    }
+
+    /**
+     * Interpolate between two transform matrices (rotation + translation).
+     * Port of upstream TACZ MathUtil.applyMatrixLerp.
+     */
+    public static void applyMatrixLerp(Matrix4f fromMatrix, Matrix4f toMatrix, Matrix4f resultMatrix, float alpha) {
+        Vector3f translation = new Vector3f(
+                toMatrix.m30() - fromMatrix.m30(),
+                toMatrix.m31() - fromMatrix.m31(),
+                toMatrix.m32() - fromMatrix.m32()
+        );
+        translation.mul(alpha);
+        Vector3f fromRotation = getEulerAngles(fromMatrix);
+        float[] qFrom = toQuaternion(fromRotation.x(), fromRotation.y(), fromRotation.z());
+        Vector3f toRotation = getEulerAngles(toMatrix);
+        float[] qTo = toQuaternion(toRotation.x(), toRotation.y(), toRotation.z());
+        float[] qRelative = getRelativeQuaternion(qFrom, qTo);
+        Quaternionf qLerped = toQuaternion(slerp(QUATERNION_ONE, qRelative, alpha));
+        resultMatrix.m30(resultMatrix.m30() + translation.x());
+        resultMatrix.m31(resultMatrix.m31() + translation.y());
+        resultMatrix.m32(resultMatrix.m32() + translation.z());
+        resultMatrix.rotate(qLerped);
     }
 }

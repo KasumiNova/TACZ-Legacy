@@ -12,21 +12,30 @@ import com.tacz.legacy.client.animation.statemachine.GunAnimationStateContext;
 import com.tacz.legacy.client.model.BedrockAnimatedModel;
 import com.tacz.legacy.client.model.BedrockGunModel;
 import com.tacz.legacy.client.resource.pojo.animation.bedrock.BedrockAnimationFile;
+import com.tacz.legacy.client.resource.pojo.display.gun.DefaultAnimationType;
 import com.tacz.legacy.client.resource.pojo.display.gun.GunDisplay;
 import com.tacz.legacy.client.resource.pojo.display.gun.GunTransform;
+import com.tacz.legacy.client.resource.pojo.display.gun.TextShow;
 import com.tacz.legacy.client.resource.pojo.model.BedrockVersion;
+import com.tacz.legacy.util.ColorHex;
 import net.minecraft.util.ResourceLocation;
 import org.luaj.vm2.LuaTable;
 import org.luaj.vm2.lib.jse.CoerceJavaToLua;
 
 import javax.annotation.Nullable;
+import java.util.List;
 import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
 
 /**
  * 经过处理和校验的枪械显示运行时数据。
  * Port of upstream TACZ GunDisplayInstance for 1.12.2.
  */
 public class GunDisplayInstance {
+    private static final ResourceLocation DEFAULT_RIFLE_ANIMATION = new ResourceLocation("tacz", "rifle_default");
+    private static final ResourceLocation DEFAULT_PISTOL_ANIMATION = new ResourceLocation("tacz", "pistol_default");
+
      private BedrockGunModel gunModel;
     private @Nullable LuaAnimationStateMachine<GunAnimationStateContext> animationStateMachine;
     private @Nullable LuaTable stateMachineParam;
@@ -47,6 +56,7 @@ public class GunDisplayInstance {
             instance.checkAnimation(display, assets);
             instance.checkSounds(display);
             instance.checkTransform(display);
+            instance.checkTextShow(display);
             instance.ironZoom = Math.max(display.getIronZoom(), 1.0f);
             instance.zoomModelFov = Math.min(display.getZoomModelFov(), 70f);
             instance.showCrosshair = display.isShowCrosshair();
@@ -80,6 +90,12 @@ public class GunDisplayInstance {
             if (animFile == null) throw new IllegalArgumentException("animation not found: " + location);
             controller = Animations.createControllerFromBedrock(animFile, gunModel);
         }
+        ResourceLocation fallbackLocation = resolveFallbackAnimationLocation(display);
+        if (fallbackLocation != null) {
+            BedrockAnimationFile fallbackFile = assets.getAnimationFile(fallbackLocation);
+            if (fallbackFile == null) throw new IllegalArgumentException("animation not found: " + fallbackLocation);
+            provideAnimationPrototypesIfAbsent(controller, fallbackFile);
+        }
         // Initialize state machine
         ResourceLocation smLocation = display.getStateMachineLocation();
         if (smLocation == null) {
@@ -104,6 +120,37 @@ public class GunDisplayInstance {
         }
     }
 
+    @Nullable
+    static ResourceLocation resolveFallbackAnimationLocation(GunDisplay display) {
+        ResourceLocation explicit = display.getDefaultAnimation();
+        if (explicit != null) {
+            return explicit;
+        }
+        return resolveBuiltInDefaultAnimation(display.getDefaultAnimationType());
+    }
+
+    @Nullable
+    static ResourceLocation resolveBuiltInDefaultAnimation(@Nullable DefaultAnimationType type) {
+        if (type == null) {
+            return null;
+        }
+        switch (type) {
+            case RIFLE:
+                return DEFAULT_RIFLE_ANIMATION;
+            case PISTOL:
+                return DEFAULT_PISTOL_ANIMATION;
+            default:
+                return null;
+        }
+    }
+
+    static void provideAnimationPrototypesIfAbsent(AnimationController controller, BedrockAnimationFile animationFile) {
+        List<ObjectAnimation> animationList = Animations.createAnimationFromBedrock(animationFile);
+        for (ObjectAnimation animation : animationList) {
+            controller.providePrototypeIfAbsent(animation.name, () -> new ObjectAnimation(animation));
+        }
+    }
+
     private void checkSounds(GunDisplay display) {
         Map<String, ResourceLocation> soundMaps = display.getSounds();
         if (soundMaps != null && !soundMaps.isEmpty()) {
@@ -118,6 +165,18 @@ public class GunDisplayInstance {
         } else {
             transform = t;
         }
+    }
+
+    private void checkTextShow(GunDisplay display) {
+        Map<String, TextShow> textShowMap = Maps.newHashMap();
+        display.getTextShows().forEach((key, value) -> {
+            if (StringUtils.isNoneBlank(key)) {
+                int color = ColorHex.colorTextToRgbInt(value.getColorText());
+                value.setColorInt(color);
+                textShowMap.put(key, value);
+            }
+        });
+        gunModel.setTextShowList(textShowMap);
     }
 
     // --- Getters ---

@@ -2,10 +2,12 @@ package com.tacz.legacy.client.gameplay
 
 import com.tacz.legacy.api.client.animation.statemachine.AnimationStateMachine
 import com.tacz.legacy.api.item.IGun
+import com.tacz.legacy.api.item.attachment.AttachmentType
 import com.tacz.legacy.client.animation.statemachine.GunAnimationConstant
 import com.tacz.legacy.client.animation.statemachine.GunAnimationStateContext
 import com.tacz.legacy.client.resource.GunDisplayInstance
 import com.tacz.legacy.client.resource.TACZClientAssetManager
+import com.tacz.legacy.common.resource.GunDataAccessor
 import com.tacz.legacy.common.resource.TACZGunPackPresentation
 import com.tacz.legacy.common.resource.TACZGunPackRuntimeRegistry
 import net.minecraft.client.entity.EntityPlayerSP
@@ -13,6 +15,10 @@ import net.minecraft.item.ItemStack
 import kotlin.math.abs
 
 internal object LegacyClientGunAnimationDriver {
+    private var exitingStateMachine: AnimationStateMachine<GunAnimationStateContext>? = null
+    private var exitingStack: ItemStack? = null
+    private var exitingDisplay: GunDisplayInstance? = null
+
     internal fun resolveDisplayInstance(stack: ItemStack): GunDisplayInstance? {
         val iGun = stack.item as? IGun ?: return null
         val snapshot = TACZGunPackRuntimeRegistry.getSnapshot()
@@ -39,6 +45,32 @@ internal object LegacyClientGunAnimationDriver {
         } else {
             GunAnimationConstant.INPUT_IDLE
         }
+    }
+
+    internal fun resolveMeleeAnimationInput(
+        hasMuzzleMelee: Boolean,
+        hasStockMelee: Boolean,
+        defaultAnimationType: String?,
+    ): String? {
+        if (hasMuzzleMelee) {
+            return GunAnimationConstant.INPUT_BAYONET_MUZZLE
+        }
+        if (hasStockMelee) {
+            return GunAnimationConstant.INPUT_BAYONET_STOCK
+        }
+        return when (defaultAnimationType?.lowercase()) {
+            "melee_stock" -> GunAnimationConstant.INPUT_BAYONET_STOCK
+            null -> null
+            else -> GunAnimationConstant.INPUT_BAYONET_PUSH
+        }
+    }
+
+    internal fun determineMeleeInput(stack: ItemStack): String? {
+        val iGun = stack.item as? IGun ?: return null
+        val muzzleMelee = GunDataAccessor.getAttachmentMeleeData(iGun.getAttachmentId(stack, AttachmentType.MUZZLE)) != null
+        val stockMelee = GunDataAccessor.getAttachmentMeleeData(iGun.getAttachmentId(stack, AttachmentType.STOCK)) != null
+        val defaultAnimationType = GunDataAccessor.getGunData(iGun.getGunId(stack))?.meleeData?.defaultMeleeData?.animationType
+        return resolveMeleeAnimationInput(muzzleMelee, stockMelee, defaultAnimationType)
     }
 
     internal fun prepareContext(
@@ -79,6 +111,63 @@ internal object LegacyClientGunAnimationDriver {
         return trigger(stateMachine, input, stack, display, partialTicks)
     }
 
+    internal fun beginPutAway(stack: ItemStack, partialTicks: Float = 0f): Boolean {
+        val display = resolveDisplayInstance(stack) ?: return false
+        val stateMachine = display.animationStateMachine ?: return false
+        if (!stateMachine.isInitialized) {
+            return false
+        }
+        val putAwayTimeMs = resolvePutAwayTimeMs(stack)
+        val context = prepareContext(stateMachine, stack, display, partialTicks)
+        context.putAwayTime = putAwayTimeMs / 1000f
+        stateMachine.trigger(GunAnimationConstant.INPUT_PUT_AWAY)
+        stateMachine.exit()
+        stateMachine.setExitingTime(putAwayTimeMs + 50L)
+        exitingStateMachine = stateMachine
+        exitingStack = stack.copy()
+        exitingDisplay = display
+        return true
+    }
+
+    internal fun visualUpdateHeldGun(player: EntityPlayerSP, partialTicks: Float): Boolean {
+        val stack = player.heldItemMainhand
+        val display = resolveDisplayInstance(stack) ?: return false
+        val stateMachine = display.animationStateMachine ?: return false
+        if (!stateMachine.isInitialized && stateMachine.exitingTime < System.currentTimeMillis()) {
+            prepareContext(stateMachine, stack, display, partialTicks)
+            stateMachine.initialize()
+            stateMachine.trigger(GunAnimationConstant.INPUT_DRAW)
+        }
+        if (!stateMachine.isInitialized) {
+            return false
+        }
+        prepareContext(stateMachine, stack, display, partialTicks)
+        stateMachine.visualUpdate()
+        return true
+    }
+
+    internal fun visualUpdateExitingAnimation(partialTicks: Float): Boolean {
+        val stateMachine = exitingStateMachine ?: return false
+        if (stateMachine.exitingTime < System.currentTimeMillis()) {
+            clearTransientState()
+            return false
+        }
+        val stack = exitingStack ?: run {
+            clearTransientState()
+            return false
+        }
+        val context = prepareContext(stateMachine, stack, exitingDisplay, partialTicks)
+        context.putAwayTime = resolvePutAwayTimeMs(stack) / 1000f
+        stateMachine.visualUpdate()
+        return true
+    }
+
+    internal fun clearTransientState(): Unit {
+        exitingStateMachine = null
+        exitingStack = null
+        exitingDisplay = null
+    }
+
     internal fun tickLoopAnimation(player: EntityPlayerSP): Boolean {
         val stack = player.heldItemMainhand
         val display = resolveDisplayInstance(stack) ?: return false
@@ -92,5 +181,11 @@ internal object LegacyClientGunAnimationDriver {
             movementInputMissing = movement == null,
         )
         return trigger(stateMachine, input, stack, display)
+    }
+
+    private fun resolvePutAwayTimeMs(stack: ItemStack): Long {
+        val iGun = stack.item as? IGun ?: return 0L
+        val gunData = GunDataAccessor.getGunData(iGun.getGunId(stack)) ?: return 0L
+        return (gunData.putAwayTimeS * 1000f).toLong().coerceAtLeast(0L)
     }
 }
