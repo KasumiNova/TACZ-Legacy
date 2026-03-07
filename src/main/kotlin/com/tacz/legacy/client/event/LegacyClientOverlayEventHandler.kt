@@ -4,10 +4,13 @@ import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.gun.FireMode
 import com.tacz.legacy.client.input.LegacyInputExtraCheck
 import com.tacz.legacy.client.input.LegacyKeyBindings
+import com.tacz.legacy.client.resource.TACZClientAssetManager
 import com.tacz.legacy.common.config.LegacyConfigManager
 import com.tacz.legacy.common.config.InteractKeyConfigRead
 import com.tacz.legacy.common.item.LegacyRuntimeTooltipSupport
 import com.tacz.legacy.common.resource.GunDataAccessor
+import com.tacz.legacy.common.resource.TACZGunPackPresentation
+import com.tacz.legacy.common.resource.TACZGunPackRuntimeRegistry
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.Gui
 import net.minecraft.client.renderer.GlStateManager
@@ -66,7 +69,7 @@ internal object LegacyClientOverlayEventHandler {
         } else {
             LegacyRuntimeTooltipSupport.getCurrentAmmoWithBarrel(stack, iGun, gunData)
         }.coerceIn(0, 9999)
-        val maxAmmo = LegacyRuntimeTooltipSupport.getMaxAmmoWithBarrel(gunData).coerceAtLeast(1)
+        val maxAmmo = LegacyRuntimeTooltipSupport.getMaxAmmoWithBarrel(stack, gunData).coerceAtLeast(1)
         val reserveAmmo = when {
             useInventoryAmmo -> 0
             gunData.isReloadInfinite -> Int.MAX_VALUE
@@ -109,14 +112,20 @@ internal object LegacyClientOverlayEventHandler {
         )
         GlStateManager.popMatrix()
 
-        val hudTextures = LegacyRuntimeTooltipSupport.resolveHudTextures(stack, gunId)
+        // Resolve HUD textures through the client asset runtime (same path slot
+        // textures use), not by hand-crafting paths from raw display JSON.
+        val snapshot = TACZGunPackRuntimeRegistry.getSnapshot()
+        val displayId = TACZGunPackPresentation.resolveGunDisplayId(snapshot, gunId)
+        val gunDisplay = displayId?.let(TACZClientAssetManager::getGunDisplay)
+        val hudPrimary = gunDisplay?.hudTextureLocation?.let(TACZClientAssetManager::getTextureLocation)
+        val hudEmpty = gunDisplay?.hudEmptyTextureLocation?.let(TACZClientAssetManager::getTextureLocation)
         val hudTexture = when {
-            currentAmmo <= 0 || overheatLocked -> hudTextures.empty ?: hudTextures.primary
-            else -> hudTextures.primary
+            currentAmmo <= 0 || overheatLocked -> hudEmpty ?: hudPrimary
+            else -> hudPrimary
         }
         if (hudTexture != null) {
             mc.textureManager.bindTexture(hudTexture)
-            if ((currentAmmo <= 0 || overheatLocked) && hudTextures.empty == null) {
+            if ((currentAmmo <= 0 || overheatLocked) && hudEmpty == null) {
                 GlStateManager.color(1f, 0.3f, 0.3f, 1f)
             } else {
                 GlStateManager.color(1f, 1f, 1f, 1f)
@@ -182,7 +191,7 @@ internal object LegacyClientOverlayEventHandler {
         }
         Gui.drawModalRectWithCustomSizedTexture(scaledWidth / 2 - 64, scaledHeight / 2 - 44, 0f, 0f, 128, 128, 128f, 128f)
         GlStateManager.color(1f, 1f, 1f, 1f)
-        val percentText = if (locked) "!OVERHEAT!" else heatPercentFormat.format(percent.toDouble())
+        val percentText = if (locked) I18n.translateToLocal("hud.tacz.heat.overheat") else heatPercentFormat.format(percent.toDouble())
         val textColor = if (locked) {
             if (tick % 20 < 10) 0xFFFF0000.toInt() else 0xFFFFFF00.toInt()
         } else {

@@ -36,7 +36,7 @@ class LegacyRuntimeTooltipSupportTest {
     }
 
     @Test
-    fun `gun tooltip resolves runtime text hide flags and hud texture`() {
+    fun `gun tooltip resolves runtime text hide flags`() {
         loadDemoPack()
         val gunItem = ModernKineticGunItem()
         val stack = ItemStack(gunItem)
@@ -49,10 +49,6 @@ class LegacyRuntimeTooltipSupportTest {
 
         assertEquals("Demo Rifle", LegacyRuntimeTooltipSupport.resolveDisplayName(stack, "fallback"))
         assertTrue(LegacyRuntimeTooltipSupport.isContinuousBurst(gunId))
-        assertEquals(
-            ResourceLocation("demo", "textures/gun/hud/test_rifle.png"),
-            LegacyRuntimeTooltipSupport.resolveHudTextures(stack, gunId).primary,
-        )
 
         val tooltip = mutableListOf<String>()
         LegacyRuntimeTooltipSupport.appendTooltip(stack, tooltip, advanced = true)

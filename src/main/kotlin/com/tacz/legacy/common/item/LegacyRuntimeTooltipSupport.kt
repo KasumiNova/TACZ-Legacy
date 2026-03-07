@@ -5,6 +5,7 @@ import com.tacz.legacy.api.item.IAmmo
 import com.tacz.legacy.api.item.IAmmoBox
 import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.gun.FireMode
+import com.tacz.legacy.common.application.refit.LegacyGunRefitRuntime
 import com.tacz.legacy.common.config.LegacyConfigManager
 import com.tacz.legacy.common.resource.BoltType
 import com.tacz.legacy.common.resource.GunCombatData
@@ -12,7 +13,6 @@ import com.tacz.legacy.common.resource.GunDataAccessor
 import com.tacz.legacy.common.resource.TACZAmmoIndexDefinition
 import com.tacz.legacy.common.resource.TACZAttachmentIndexDefinition
 import com.tacz.legacy.common.resource.TACZBlockIndexDefinition
-import com.tacz.legacy.common.resource.TACZDisplayDefinition
 import com.tacz.legacy.common.resource.TACZGunIndexDefinition
 import com.tacz.legacy.common.resource.TACZGunPackPresentation
 import com.tacz.legacy.common.resource.TACZGunPackRuntimeRegistry
@@ -33,11 +33,6 @@ internal object LegacyRuntimeTooltipSupport {
 
     private val WEIGHT_FORMAT: DecimalFormat = DecimalFormat("0.##")
     private val DAMAGE_FORMAT: DecimalFormat = DecimalFormat("0.##")
-
-    internal data class HudTextures(
-        val primary: ResourceLocation?,
-        val empty: ResourceLocation?,
-    )
 
     internal data class HeatInfo(
         val current: Float,
@@ -93,6 +88,11 @@ internal object LegacyRuntimeTooltipSupport {
         return gunData.ammoAmount + if (gunData.boltType == BoltType.OPEN_BOLT) 0 else 1
     }
 
+    internal fun getMaxAmmoWithBarrel(stack: ItemStack, gunData: GunCombatData): Int {
+        val capacity = LegacyGunRefitRuntime.computeAmmoCapacity(stack).coerceAtLeast(gunData.ammoAmount)
+        return capacity + if (gunData.boltType == BoltType.OPEN_BOLT) 0 else 1
+    }
+
     internal fun countInventoryAmmo(player: EntityPlayer, gunStack: ItemStack): Int {
         val iGun = gunStack.item as? IGun ?: return 0
         if (iGun.useDummyAmmo(gunStack)) {
@@ -118,13 +118,6 @@ internal object LegacyRuntimeTooltipSupport {
             }
         }
         return total.coerceAtMost(9999)
-    }
-
-    internal fun resolveHudTextures(stack: ItemStack, gunId: ResourceLocation): HudTextures {
-        val display = resolveGunDisplay(stack, gunId)
-        val primary = display?.raw?.get("hud")?.takeIf { it.isJsonPrimitive }?.asString?.let(::textureLocationOf)
-        val empty = display?.raw?.get("hud_empty")?.takeIf { it.isJsonPrimitive }?.asString?.let(::textureLocationOf)
-        return HudTextures(primary, empty)
     }
 
     internal fun resolveHeatInfo(stack: ItemStack, gunId: ResourceLocation, iGun: IGun): HeatInfo? {
@@ -183,7 +176,7 @@ internal object LegacyRuntimeTooltipSupport {
             ?.takeIf { it.isNotBlank() }
             ?: localizedLabel("config.tacz.common.ammo", "Ammo")
         val currentAmmo = getCurrentAmmoWithBarrel(stack, iGun, gunData)
-        val maxAmmo = getMaxAmmoWithBarrel(gunData)
+        val maxAmmo = getMaxAmmoWithBarrel(stack, gunData)
         tooltip += "${TextFormatting.GRAY}$ammoName${TextFormatting.DARK_GRAY}: ${TextFormatting.WHITE}$currentAmmo/$maxAmmo"
     }
 
@@ -324,15 +317,6 @@ internal object LegacyRuntimeTooltipSupport {
         return resolveAmmoId(stack) ?: resolveAttachmentId(stack) ?: resolveBlockId(stack)
     }
 
-    private fun resolveGunDisplay(stack: ItemStack, gunId: ResourceLocation): TACZDisplayDefinition? {
-        val snapshot = TACZGunPackRuntimeRegistry.getSnapshot()
-        val overrideDisplayId = stack.tagCompound?.getString(GUN_DISPLAY_ID_TAG)
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::safeResourceLocation)
-        val displayId = overrideDisplayId ?: snapshot.guns[gunId]?.index?.display
-        return displayId?.let(snapshot.gunDisplays::get)
-    }
-
     private fun fireModeText(fireMode: FireMode): String {
         val key = when (fireMode) {
             FireMode.AUTO -> "gui.tacz.gun_refit.property_diagrams.auto"
@@ -364,11 +348,6 @@ internal object LegacyRuntimeTooltipSupport {
 
     private fun isHidden(mask: Int, part: GunTooltipPart): Boolean {
         return mask and part.mask != 0
-    }
-
-    private fun textureLocationOf(path: String): ResourceLocation? {
-        val id = safeResourceLocation(path) ?: return null
-        return ResourceLocation(id.namespace, "textures/${id.path}.png")
     }
 
     private fun localizeOrRaw(keyOrText: String): String {
