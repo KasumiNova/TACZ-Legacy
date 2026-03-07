@@ -11,6 +11,7 @@ import com.tacz.legacy.client.gameplay.LegacyClientGunAnimationDriver
 import com.tacz.legacy.client.model.BedrockAnimatedModel
 import com.tacz.legacy.client.model.BedrockGunModel
 import com.tacz.legacy.client.model.bedrock.BedrockPart
+import com.tacz.legacy.client.model.functional.MuzzleFlashRender
 import com.tacz.legacy.client.resource.GunDisplayInstance
 import com.tacz.legacy.client.resource.TACZClientAssetManager
 import com.tacz.legacy.common.resource.TACZGunPackPresentation
@@ -81,6 +82,7 @@ internal object FirstPersonRenderGunEvent {
     @JvmStatic
     fun onShoot() {
         shootTimeStamp = System.currentTimeMillis()
+        MuzzleFlashRender.onShoot()
     }
 
     @SubscribeEvent
@@ -188,6 +190,15 @@ internal object FirstPersonRenderGunEvent {
         Minecraft.getMinecraft().textureManager.bindTexture(registeredTexture)
         displayInstance.setActiveGunTexture(registeredTexture)
         model.renderHand = true
+
+        // Set up muzzle flash rendering for this frame
+        val muzzleFlashRender = model.muzzleFlashRender
+        if (muzzleFlashRender != null) {
+            MuzzleFlashRender.isSelf = true
+            val gunDisplay = TACZClientAssetManager.getGunDisplay(displayId)
+            muzzleFlashRender.setActiveMuzzleFlash(gunDisplay?.getMuzzleFlash())
+        }
+
         GlStateManager.enableLighting()
         GlStateManager.enableRescaleNormal()
         GlStateManager.enableBlend()
@@ -205,6 +216,7 @@ internal object FirstPersonRenderGunEvent {
 
         model.render(stack)
         model.renderHand = false
+        MuzzleFlashRender.isSelf = false
 
         GlStateManager.disableBlend()
         GlStateManager.disableRescaleNormal()

@@ -6,6 +6,7 @@ import com.tacz.legacy.api.item.attachment.AttachmentType;
 import com.tacz.legacy.client.model.bedrock.BedrockPart;
 import com.tacz.legacy.client.model.functional.AttachmentRender;
 import com.tacz.legacy.client.model.functional.LeftHandRender;
+import com.tacz.legacy.client.model.functional.MuzzleFlashRender;
 import com.tacz.legacy.client.model.functional.RightHandRender;
 import com.tacz.legacy.client.model.functional.TextShowRender;
 import com.tacz.legacy.client.resource.TACZClientAssetManager;
@@ -53,6 +54,8 @@ public class BedrockGunModel extends BedrockAnimatedModel {
     private final LeftHandRender leftHandRender;
     @Nullable
     private final RightHandRender rightHandRender;
+    @Nullable
+    private final MuzzleFlashRender muzzleFlashRender;
 
     @Nullable
     private List<BedrockPart> ironSightPath;
@@ -70,12 +73,14 @@ public class BedrockGunModel extends BedrockAnimatedModel {
         super(pojo, version);
         this.leftHandRender = new LeftHandRender(this);
         this.rightHandRender = new RightHandRender(this);
+        this.muzzleFlashRender = new MuzzleFlashRender(this);
         this.ironSightPath = getPath(modelMap.get(IRON_VIEW_NODE));
         this.scopePosPath = getPath(modelMap.get(AttachmentType.SCOPE.getSerializedName() + ATTACHMENT_POS_SUFFIX));
         this.muzzleFlashPosPath = getPath(modelMap.get(MUZZLE_FLASH_ORIGIN_NODE));
 
         this.setFunctionalRenderer(LEFTHAND_POS_NODE, bedrockPart -> leftHandRender);
         this.setFunctionalRenderer(RIGHTHAND_POS_NODE, bedrockPart -> rightHandRender);
+        this.setFunctionalRenderer(MUZZLE_FLASH_ORIGIN_NODE, bedrockPart -> muzzleFlashRender);
         this.setFunctionalRenderer(MOUNT, bedrockPart -> scopeVisibilityRender(bedrockPart, true));
         this.setFunctionalRenderer(CARRY, bedrockPart -> scopeVisibilityRender(bedrockPart, false));
         this.setFunctionalRenderer(SIGHT_FOLDED, bedrockPart -> scopeVisibilityRender(bedrockPart, true));
@@ -285,6 +290,11 @@ public class BedrockGunModel extends BedrockAnimatedModel {
     @Nullable
     public List<BedrockPart> getMuzzleFlashPosPath() {
         return muzzleFlashPosPath;
+    }
+
+    @Nullable
+    public MuzzleFlashRender getMuzzleFlashRender() {
+        return muzzleFlashRender;
     }
 
     @Override

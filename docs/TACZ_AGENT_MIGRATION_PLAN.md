@@ -127,7 +127,7 @@
 - **Foundation**：已完成第一波落地，基础启动、注册、烟测脚本与基础测试已进仓。
 - **数据/枪包兼容**：核心扫描 / 解析 / 索引 / modifier / 兼容读取主链已落地，并已开始被真实消费到 item、tooltip、workbench 摘要、recipe filter、attachment tag 等路径；当前优先级转为**回归修复、缺口补齐与新增消费点接入**。
 - **战斗/实体/网络**：服务端 shooter 状态机、网络通道与主消息骨架已落地，并已补齐 ammo 搜索 parity、缺失的 S2C 消息类型与基础客户端事件投递链路；当前优先级转为**回归修复、剩余 parity 收尾与表现层继续消费**。
-- **音频系统 / smoke 守门**：专用音频 runtime 的阶段 A/B 已落地：`GunSoundPlayManager -> TACZAudioRuntime` 统一 facade 已建立，reload 阶段已有 manifest/probe/preflight，`diagnostic/null` backend 可用于 smoke，`GunPackSoundResourcePack` 被降级为 `legacy-minecraft` fallback，focused smoke 默认不再依赖原版资源刷新路径。最新两轮 focused smoke 已把根因进一步钉死：`diagnostic` 模式证明 animation / `ServerMessageSound` 请求都能进入 runtime；而默认 `legacy-minecraft` 路径（`build/smoke-tests/runclient-focused-smoke-20260308-032140.log`）证明客户端默认 backend 仍是旧 `SoundHandler` 链，`tacz:hk_mp5a5/hk_mp5a5_shoot` 可提交到 backend，但 `minecraft:rpg7_reload_lower` 这类缺失动画音效会在 legacy 播放链触发 `CodecJOrbis` / `Unable to acquire inputstream` 并拖垮 `runClient`。因此当前“武器没音效”的主因已经明确不是“请求没对接到 runtime”，而是“默认可听 backend 仍是 legacy，且仍暴露上游缺失/不兼容资源与旧解码链问题”。当前剩余重点为：dedicated playback backend、decode/normalize/cache 与不兼容资源处置策略。
+- **音频系统 / smoke 守门**：专用音频 runtime 的阶段 A/B 已落地：`GunSoundPlayManager -> TACZAudioRuntime` 统一 facade 已建立，reload 阶段已有 manifest/probe/preflight，`diagnostic/null` backend 可用于 smoke，`GunPackSoundResourcePack` 被降级为 `legacy-minecraft` fallback，focused smoke 默认不再依赖原版资源刷新路径。最新两轮 focused smoke 已把根因进一步钉死：`diagnostic` 模式证明 animation / `ServerMessageSound` 请求都能进入 runtime；而默认 `legacy-minecraft` 路径（`build/smoke-tests/runclient-focused-smoke-20260308-032140.log`）证明客户端默认 backend 仍是旧 `SoundHandler` 链，`tacz:hk_mp5a5/hk_mp5a5_shoot` 可提交到 backend，但 `minecraft:rpg7_reload_lower` 这类缺失动画音效会在 legacy 播放链触发 `CodecJOrbis` / `Unable to acquire inputstream` 并拖垮 `runClient`。针对这一点，`TACZAudioRuntime` 现已新增 legacy fallback 的提交前防护：`MISSING/UNTRACKED` 只有在 1.12 资源管理器能真实解析 `sounds/<path>.ogg` 时才允许继续提交，`INVALID_* / IO_ERROR` 会直接 `DROPPED`，从而避免坏引用再次把旧声音栈拖死。当前剩余重点为：dedicated playback backend、decode/normalize/cache 与不兼容资源处置策略。补充说明：本轮重新执行定向 Gradle 测试与 legacy smoke 时，又分别被工作区内无关的 `compileJava` 错误（`MuzzleFlashRender.java` / `BedrockGunModel.java`）以及 Forge 1.12 对多版本 Kotlin jar 的 ASM 扫描问题挡住，因此新的防卡死逻辑已完成静态校验和代码收口，但未能在当前环境噪声下再次跑到 in-world marker。
 - **客户端交互 / UI**：本阶段迭代已完成，已把 runtime 下游消费层推进到真实可用程度，并补上 `gun_smith_table` 的基础 `GUI / container / craft` 闭环。当前已落地内容包括：
   - runtime 翻译 / display / recipe filter / workbench 摘要 / attachment tag 的真实客户端消费入口；
   - `GunEvents`、输入桥、overlay、tooltip bridge、`TACZGunPackPresentation` 等客户端桥接层；
@@ -144,10 +144,19 @@
    - 这也解释了为什么此前只有 `special_melee_task_manager` 一类少数资源看起来还能动，而标准枪几乎静止：前者自带完整动画原型，后者大量依赖 `rifle_default / pistol_default` 回退；Legacy 之前没有把这些默认 prototype 装入 controller，状态机即使收到了 trigger，也只能驱动一个缺胳膊少腿的动画集合；
    - 最新 focused smoke（`build/smoke-tests/runclient-focused-smoke-20260308-020616.log`）已打到 `ANIMATION_OBSERVED` 与 `PASS`，并留下截图 `build/smoke-tests/focused-smoke-screenshots/runclient-focused-smoke-20260308-020616/01-animation_observed.png`；日志中可见标准枪 `tacz:hk_mp5a5` 运行时 `defaultType=rifle`、`smInitialized=true`，证明默认回退与第一人称动画链已经真正走到运行时，而不只是单测层面的静态修复。
    - **TextShow / 模型文字显示**：已完成上游 `TextShow` + `PapiManager` + `TextShowRender` 的完整移植。具体落地文件：`Align.java`（枚举）、`TextShow.java`（POJO）、`PapiManager.java`（Placeholder API 管理器，内含 `%ammo_count%` / `%player_name%` 两组占位符实现）、`TextShowRender.java`（GL immediate mode 下的延迟文字渲染器，利用 `delegateRender` 在主渲染完成后绘制文字）、`ColorHex.java`（颜色解析工具）。`BedrockModel` 基类新增 `delegateRenderers` 列表，`BedrockGunModel.setTextShowList()` 负责按 bone 名称注册渲染器，`GunDisplayInstance.checkTextShow()` 在 display 创建时解析颜色并接线。已有 `ColorHexTest`（3 项）+ `TextShowDeserializationTest`（5 项）回归覆盖，全量 191 tests 通过，focused smoke PASS（commit `5aecc61`）。
+   - **第一人称程序化动画与 fire feedback**（2026-03-08 本轮新增）：已完成上游 `FirstPersonRenderGunEvent` 全套程序化动画系统的移植，包括：
+     - `SecondOrderDynamics.java`：二阶动力学平滑器（渲染线程版，上游为后台线程），用于 ADS 瞄准过渡与跳跃摆动平滑；
+     - `PerlinNoise.java`：平滑随机噪声，用于射击水平偏移和偏航旋转；
+     - `Easing.java`：`easeOutCubic` 缓动函数；
+     - `MathUtil.java` 新增 `getEulerAngles(Matrix4f)` + `applyMatrixLerp(Matrix4f, Matrix4f, Matrix4f, float)` 用于 idle/aiming positioning 矩阵混合（对齐上游 lerp 语义）；
+     - `FirstPersonRenderGunEvent.kt` 全面重写：新增 `applyShootSwayAndRotation`（射击后坐力/偏移）、`applyJumpingSway`（跳跃/着陆摆动）、`applyAnimationConstraintTransform`（约束骨骼逆变换，使瞄准时枪械稳定）、view bob 补偿（使用 1.12 `renderArmPitch/renderArmYaw` 替代上游 `xBob/yBob`）、`applyFirstPersonPositioningTransform` 改用 `MathUtil.applyMatrixLerp` 矩阵混合；
+     - `MuzzleFlashRender.java`：枪口火焰渲染器（`IFunctionalRenderer` 实现），50ms 显示窗口、随机旋转、缩放动画、半透明 + 辉光双层渲染；`BedrockGunModel` 新增 `muzzle_flash` 节点路径解析与 `MuzzleFlashRender` 注册；
+     - `LegacyClientShootCoordinator.kt` 新增 `onShoot()` 调用链，驱动后坐力时间戳 + 枪口火焰时间戳；
+     - 验证：192 tests 全通过、focused smoke PASS、截图确认第一人称渲染链路完整到运行时。
 - **验证状态**：编译与定向测试已覆盖 Client UX / gunsmith / refit backend / render parsing 等阶段性变更；渲染基础设施已有一轮成功的 `runClient` smoke。后续若某些 client UX / refit 手工路径再次被 Forge 1.12 对多版本 Kotlin jar 的 ASM 扫描问题挡在模组初始化前，仍应按“环境阻塞而非本轮回归”记录，不要把阶段性验证结论混成一团。
 
 因此，下一阶段最值得投入的主线通常不是“继续重迁数据/战斗/Client UX/Render 基础设施主链”，而是：
-    1. **Render 剩余子轨**：animation state machine、关键帧插值、bone animation application、ammo/attachment display renderer、muzzle flash / shell ejection、第一人称 hand/scope 渲染链路
+    1. **Render 剩余子轨**：~~animation state machine~~（已落地）、~~关键帧插值~~（已落地）、bone animation application、ammo/attachment display renderer、~~muzzle flash~~（本轮已落地） / shell ejection、第一人称 hand/scope 渲染链路、~~程序化后坐力 / 射击摆动 / 跳跃摆动~~（本轮已落地）、~~ADS 二阶动力学平滑~~（本轮已落地）、~~约束骨骼逆变换~~（本轮已落地）
       2. **Combat 剩余 parity 子轨**：普通枪稳定出弹、伤害真值、爆炸物命中/延时爆炸语义与服务端裁决一致性
       3. **剩余 blocked 的 Client UX / Refit 能力**：例如 `GunRefitScreen` 本体、安装/卸下/laser 提交消息、screen refresh 回包、附件属性刷新与副作用链
       4. **第三方兼容与剩余玩法收尾**：在核心主链已成形的前提下，继续补 JEI / KubeJS / 高级玩法与表现边角
