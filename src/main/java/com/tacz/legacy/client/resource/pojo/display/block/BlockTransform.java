@@ -93,10 +93,19 @@ public class BlockTransform {
          * Applies this transform to the current GL matrix.
          * Matches vanilla {@code ItemTransform.apply(false, poseStack)} behavior:
          * translate → rotate XYZ → scale.
+         * <p>
+         * Translation values are scaled by {@code 0.0625F} (1/16) to match vanilla's
+         * {@code ItemTransform.Deserializer} which converts pixel-units to block-units
+         * at parse time.  Upstream TACZ stores raw pixel-unit values in JSON and relies
+         * on vanilla deserialization to apply this factor.
          */
         public void apply() {
             if (translation != null && translation.length >= 3) {
-                GlStateManager.translate(translation[0], translation[1], translation[2]);
+                GlStateManager.translate(
+                        translation[0] * 0.0625F,
+                        translation[1] * 0.0625F,
+                        translation[2] * 0.0625F
+                );
             }
             if (rotation != null && rotation.length >= 3) {
                 GlStateManager.rotate(rotation[0], 1, 0, 0);
