@@ -1,12 +1,14 @@
 package com.tacz.legacy.common.network.message.event
 
 import com.tacz.legacy.api.DefaultAssets
+import com.tacz.legacy.client.resource.TACZClientAssetManager
+import com.tacz.legacy.client.sound.GunSoundPlayManager
+import com.tacz.legacy.common.resource.TACZGunPackPresentation
+import com.tacz.legacy.common.resource.TACZGunPackRuntimeRegistry
 import io.netty.buffer.ByteBuf
 import net.minecraft.client.Minecraft
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.util.ResourceLocation
-import net.minecraft.util.SoundCategory
-import net.minecraft.util.SoundEvent
 import net.minecraftforge.fml.common.network.ByteBufUtils
 import net.minecraftforge.fml.common.network.simpleimpl.IMessage
 import net.minecraftforge.fml.common.network.simpleimpl.IMessageHandler
@@ -85,17 +87,18 @@ public class ServerMessageSound() : IMessage {
             mc.addScheduledTask {
                 val world = mc.world ?: return@addScheduledTask
                 val entity = world.getEntityByID(message.entityId) as? EntityLivingBase ?: return@addScheduledTask
-                // 尝试通过注册的 SoundEvent 播放；若未找到则使用 ResourceLocation 合成
-                val soundRL = ResourceLocation(message.gunId.namespace, message.soundName)
-                val soundEvent = SoundEvent.REGISTRY.getObject(soundRL)
-                if (soundEvent != null) {
-                    world.playSound(
-                        entity.posX, entity.posY, entity.posZ,
-                        soundEvent, SoundCategory.PLAYERS,
-                        message.volume, message.pitch,
-                        false,
-                    )
+                val fallbackDisplayId = TACZGunPackPresentation.resolveGunDisplayId(
+                    TACZGunPackRuntimeRegistry.getSnapshot(),
+                    message.gunId,
+                )
+                val displayId = if (message.gunDisplayId != DefaultAssets.DEFAULT_GUN_DISPLAY_ID) {
+                    message.gunDisplayId
+                } else {
+                    fallbackDisplayId ?: message.gunDisplayId
                 }
+                val display = TACZClientAssetManager.getGunDisplayInstance(displayId) ?: return@addScheduledTask
+                val soundId = display.getSound(message.soundName) ?: return@addScheduledTask
+                GunSoundPlayManager.playClientSound(entity, soundId, message.volume, message.pitch, message.distance)
             }
             return null
         }

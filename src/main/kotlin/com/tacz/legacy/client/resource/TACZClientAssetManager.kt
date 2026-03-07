@@ -6,6 +6,8 @@ import com.tacz.legacy.TACZLegacy
 import com.tacz.legacy.api.vmlib.LuaAnimationConstant
 import com.tacz.legacy.api.vmlib.LuaGunAnimationConstant
 import com.tacz.legacy.api.vmlib.LuaLibrary
+import com.tacz.legacy.client.sound.GunPackAssetLocator
+import com.tacz.legacy.client.sound.GunPackSoundResourcePack
 import com.tacz.legacy.client.resource.pojo.animation.bedrock.AnimationKeyframes
 import com.tacz.legacy.client.resource.pojo.animation.bedrock.BedrockAnimationFile
 import com.tacz.legacy.client.resource.pojo.animation.bedrock.SoundEffectKeyframes
@@ -91,6 +93,12 @@ internal object TACZClientAssetManager {
     /** Parsed bedrock animation files keyed by animation ResourceLocation. */
     private val animations = LinkedHashMap<ResourceLocation, BedrockAnimationFile>()
 
+    /** Resolved gun pack sound resource ids referenced by displays / animation keyframes. */
+    private val soundResources = LinkedHashSet<ResourceLocation>()
+
+    /** Source pack files backing the currently loaded runtime snapshot. */
+    private val packSources = ArrayList<File>()
+
     /** Compiled Lua scripts keyed by script ResourceLocation. */
     private val scripts = LinkedHashMap<ResourceLocation, LuaTable>()
 
@@ -112,6 +120,12 @@ internal object TACZClientAssetManager {
     fun getAnimationFile(id: ResourceLocation): BedrockAnimationFile? = animations[id]
     fun getScript(id: ResourceLocation): LuaTable? = scripts[id]
     fun getGunDisplayInstance(displayId: ResourceLocation): GunDisplayInstance? = gunDisplayInstances[displayId]
+    fun hasPackAsset(id: ResourceLocation): Boolean = GunPackAssetLocator.resourceExists(packSources, id)
+    fun openPackAsset(id: ResourceLocation): InputStream? = try {
+        GunPackAssetLocator.openResource(packSources, id)
+    } catch (_: Exception) {
+        null
+    }
 
     /**
      * Reload all client assets from the [snapshot].
@@ -119,6 +133,7 @@ internal object TACZClientAssetManager {
      */
     fun reload(snapshot: TACZRuntimeSnapshot) {
         clear()
+        packSources.addAll(snapshot.packs.values.map { it.sourceFile })
         parseGunDisplayDefinitions(snapshot.gunDisplays)
         parseAmmoDisplayDefinitions(snapshot.ammoDisplays)
         parseAttachmentDisplayDefinitions(snapshot.attachmentDisplays)
@@ -175,6 +190,9 @@ internal object TACZClientAssetManager {
         // Resolve scripts with dependency-aware retry (scripts use require() to reference each other)
         resolveAllScripts()
 
+        // Expose gun pack sound assets to Minecraft's audio resource manager.
+        GunPackSoundResourcePack.installOrUpdate(soundResources)
+
         val totalDisplays = gunDisplays.size + ammoDisplays.size + attachmentDisplays.size + blockDisplays.size
         TACZLegacy.logger.info(MARKER,
             "Client assets reloaded: {} displays (gun={}, ammo={}, attach={}, block={}), {} models, {} textures, {} animations, {} scripts",
@@ -212,6 +230,8 @@ internal object TACZClientAssetManager {
         models.clear()
         textures.clear()
         animations.clear()
+        soundResources.clear()
+        packSources.clear()
         scripts.clear()
         pendingScriptSources.clear()
         gunDisplayInstances.clear()
@@ -223,6 +243,7 @@ internal object TACZClientAssetManager {
                 val display = DISPLAY_GSON.fromJson(def.raw, GunDisplay::class.java)
                 display.init()
                 gunDisplays[id] = display
+                display.sounds?.values?.forEach(soundResources::add)
             } catch (e: Exception) {
                 TACZLegacy.logger.warn(MARKER, "Failed to parse gun display: {}", id, e)
             }
@@ -247,6 +268,7 @@ internal object TACZClientAssetManager {
                 val display = DISPLAY_GSON.fromJson(def.raw, AttachmentDisplay::class.java)
                 display.init()
                 attachmentDisplays[id] = display
+                display.sounds?.values?.forEach(soundResources::add)
             } catch (e: Exception) {
                 TACZLegacy.logger.warn(MARKER, "Failed to parse attachment display: {}", id, e)
             }
@@ -438,6 +460,9 @@ internal object TACZClientAssetManager {
             return
         }
         animations[id] = animFile
+        for (animation in animFile.animations.values) {
+            animation.soundEffects?.keyframes?.values?.forEach(soundResources::add)
+        }
     }
 
     // ------ Script loading ------
