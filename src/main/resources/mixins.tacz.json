@@ -9,6 +9,7 @@
     "LivingEntityMixin"
   ],
   "client": [
+    "client.EntityRendererMixin",
     "client.EntityRendererInvoker",
     "client.MinecraftMixin",
     "client.ItemRendererMixin"

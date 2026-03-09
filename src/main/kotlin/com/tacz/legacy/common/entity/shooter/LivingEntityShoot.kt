@@ -115,6 +115,7 @@ public class LivingEntityShoot(
         }
 
         data.lastShootTimestamp = data.shootTimestamp
+        data.heatTimestamp = System.currentTimeMillis()
         data.shootTimestamp = timestamp
 
         // 检查是否有数据脚本
@@ -139,12 +140,11 @@ public class LivingEntityShoot(
     private fun handleShootHeat(gunItem: ItemStack, iGun: IGun, gunData: GunCombatData) {
         if (!gunData.hasHeatData) return
         val current = iGun.getHeatAmount(gunItem)
-        val newHeat = current + gunData.heatPerShot
+        val newHeat = (current + gunData.heatPerShot).coerceAtMost(gunData.heatMax)
         iGun.setHeatAmount(gunItem, newHeat)
         if (newHeat >= gunData.heatMax) {
             iGun.setOverheatLocked(gunItem, true)
         }
-        data.heatTimestamp = System.currentTimeMillis()
     }
 
     private fun executeShoot(

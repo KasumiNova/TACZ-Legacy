@@ -47,6 +47,8 @@ import kotlin.math.sqrt
 @SideOnly(Side.CLIENT)
 internal class RenderKineticBullet(renderManager: RenderManager) : Render<EntityKineticBullet>(renderManager) {
     companion object {
+        private const val CAMERA_SETUP_YAW_OFFSET = 180.0f
+
         private val tracerDebugEnabled: Boolean
             get() = java.lang.Boolean.getBoolean("tacz.tracerDebug") ||
                 java.lang.Boolean.parseBoolean(System.getProperty("tacz.focusedSmoke.tracerDebug", "false"))
@@ -57,6 +59,7 @@ internal class RenderKineticBullet(renderManager: RenderManager) : Render<Entity
         private val focusedSmokeTracerSkipLogged = HashSet<Int>()
         private val focusedSmokeTracerFrameLogged = HashSet<Int>()
         private val tracerDebugProjectionLogged = HashSet<Int>()
+        private val tracerDebugFirstPersonLatchLogged = HashSet<Int>()
         private val internalModelGson = GsonBuilder()
             .registerTypeAdapter(CubesItem::class.java, CubesItem.Deserializer())
             .create()
@@ -155,15 +158,18 @@ internal class RenderKineticBullet(renderManager: RenderManager) : Render<Entity
         val bulletPosition = entity.interpolatePosition(partialTicks)
         val eyePosition = shooter.getPositionEyes(partialTicks)
         val disToEye = bulletPosition.distanceTo(eyePosition)
+        val tracerLengthMultiplier = FocusedSmokeRuntime.tracerLengthMultiplier.toDouble()
+        val tracerSizeMultiplier = FocusedSmokeRuntime.tracerSizeMultiplier
         var trailLength = 0.85 * sqrt(entity.motionX * entity.motionX + entity.motionY * entity.motionY + entity.motionZ * entity.motionZ)
         trailLength = min(trailLength, disToEye * 0.8)
+        trailLength *= tracerLengthMultiplier
         if (trailLength <= 1.0E-4) {
             return
         }
 
         val yaw = entity.prevRotationYaw + (entity.rotationYaw - entity.prevRotationYaw) * partialTicks - 180.0f
         val pitch = entity.prevRotationPitch + (entity.rotationPitch - entity.prevRotationPitch) * partialTicks
-        val width = (0.005f * max(1.0, disToEye / 3.5)).toFloat()
+        val width = (0.005f * max(1.0, disToEye / 3.5)).toFloat() * tracerSizeMultiplier
         val rgb = tracerColorText.toRgbColor()
         if (entity.ticksExisted < 5 && disToEye <= 2.0) {
             if (java.lang.Boolean.getBoolean("tacz.focusedSmoke") && focusedSmokeTracerSkipLogged.add(entity.entityId)) {
@@ -203,11 +209,42 @@ internal class RenderKineticBullet(renderManager: RenderManager) : Render<Entity
                 firstPersonOffset = FirstPersonRenderGunEvent.getCachedMuzzleRenderOffset()
                 val player = mc.player
                 if (firstPersonOffset != null && player != null) {
+                    val muzzleCameraPitch = FirstPersonRenderGunEvent.getCachedMuzzleCameraPitch()
+                    val muzzleCameraYawRaw = FirstPersonRenderGunEvent.getCachedMuzzleCameraYaw()
+                    val muzzleCameraYaw = normalizeTracerCameraYaw(muzzleCameraYawRaw)
+                    val currentCachedCameraPitch = FirstPersonRenderGunEvent.getCachedCameraPitch()
+                    val currentCachedCameraYawRaw = FirstPersonRenderGunEvent.getCachedCameraYaw()
+                    val currentCachedCameraYaw = normalizeTracerCameraYaw(currentCachedCameraYawRaw)
                     entity.firstPersonRenderOffset = Vector3f(firstPersonOffset)
-                    entity.firstPersonCameraPitch = FirstPersonRenderGunEvent.getCachedCameraPitch()
+                    // Use the CURRENT frame's camera angle for the sandwich rotation.
+                    // The GL modelview has the current frame's orientCamera rotation baked in;
+                    // the sandwich must undo exactly that rotation, not the previous frame's.
+                    // Upstream uses camera.getYRot() which is also the current frame's angle.
+                    entity.firstPersonCameraPitch = currentCachedCameraPitch
+                        ?: muzzleCameraPitch
                         ?: (player.prevRotationPitch + (player.rotationPitch - player.prevRotationPitch) * partialTicks)
-                    entity.firstPersonCameraYaw = FirstPersonRenderGunEvent.getCachedCameraYaw()
+                    entity.firstPersonCameraYaw = currentCachedCameraYaw
+                        ?: muzzleCameraYaw
                         ?: (player.prevRotationYaw + (player.rotationYaw - player.prevRotationYaw) * partialTicks)
+                    if (tracerDebugEnabled && tracerDebugFirstPersonLatchLogged.add(entity.entityId)) {
+                        TACZLegacy.logger.info(
+                            "[TracerDebug] FIRST_PERSON_LATCH entityId={} gun={} muzzleFrameId={} muzzleOffset=({},{},{}) muzzleCameraYawRaw={} muzzleCameraYaw={} muzzleCameraPitch={} currentCameraYawRaw={} currentCameraYaw={} currentCameraPitch={} playerYaw={} playerPitch={}",
+                            entity.entityId,
+                            entity.gunId,
+                            FirstPersonRenderGunEvent.getCachedMuzzleFrameId() ?: -1L,
+                            "%.4f".format(firstPersonOffset.x),
+                            "%.4f".format(firstPersonOffset.y),
+                            "%.4f".format(firstPersonOffset.z),
+                            "%.4f".format(muzzleCameraYawRaw ?: Float.NaN),
+                            "%.4f".format(muzzleCameraYaw ?: Float.NaN),
+                            "%.4f".format(muzzleCameraPitch ?: Float.NaN),
+                            "%.4f".format(currentCachedCameraYawRaw ?: Float.NaN),
+                            "%.4f".format(currentCachedCameraYaw ?: Float.NaN),
+                            "%.4f".format(currentCachedCameraPitch ?: Float.NaN),
+                            "%.4f".format(player.rotationYaw),
+                            "%.4f".format(player.rotationPitch),
+                        )
+                    }
                 }
             }
             if (firstPersonOffset != null) {
@@ -459,4 +496,6 @@ internal class RenderKineticBullet(renderManager: RenderManager) : Render<Entity
             (rgb and 0xFF) / 255.0f,
         )
     }
+
+    private fun normalizeTracerCameraYaw(cameraYaw: Float?): Float? = cameraYaw?.minus(CAMERA_SETUP_YAW_OFFSET)
 }

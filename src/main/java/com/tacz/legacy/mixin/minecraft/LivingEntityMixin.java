@@ -190,6 +190,8 @@ public abstract class LivingEntityMixin implements IGunOperator, KnockBackModifi
     @Unique
     private void tacz$tickHeat() {
         EntityLivingBase self = (EntityLivingBase) (Object) this;
+        // 与上游 TACZ 一致：热量计算只在服务端执行，客户端通过 ItemStack NBT 同步获取
+        if (self.world.isRemote) return;
         ItemStack mainHand = self.getHeldItemMainhand();
         if (mainHand.isEmpty() || !(mainHand.getItem() instanceof IGun)) return;
         IGun iGun = (IGun) mainHand.getItem();
@@ -224,13 +226,9 @@ public abstract class LivingEntityMixin implements IGunOperator, KnockBackModifi
             float cooling = (float) elapsed / 10000.0f * gunData.getHeatCoolingMultiplier();
             float current = iGun.getHeatAmount(mainHand);
             float newHeat = current - cooling;
+            iGun.setHeatAmount(mainHand, Math.max(newHeat, 0));
             if (newHeat <= 0) {
-                iGun.setHeatAmount(mainHand, 0);
                 iGun.setOverheatLocked(mainHand, false);
-                tacz$dataHolder.heatTimestamp = now;
-            } else {
-                iGun.setHeatAmount(mainHand, newHeat);
-                tacz$dataHolder.heatTimestamp = now;
             }
         } else {
             // 正常冷却：等待 coolingDelay 后开始冷却
@@ -239,12 +237,7 @@ public abstract class LivingEntityMixin implements IGunOperator, KnockBackModifi
             if (elapsed < gunData.getHeatCoolingDelayMs()) return;
             float cooling = (float) elapsed / 10000.0f * gunData.getHeatCoolingMultiplier();
             float newHeat = current - cooling;
-            if (newHeat <= 0) {
-                iGun.setHeatAmount(mainHand, 0);
-            } else {
-                iGun.setHeatAmount(mainHand, newHeat);
-            }
-            tacz$dataHolder.heatTimestamp = now;
+            iGun.setHeatAmount(mainHand, Math.max(newHeat, 0));
         }
     }
 

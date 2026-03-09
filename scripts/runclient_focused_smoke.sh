@@ -18,6 +18,9 @@ POLL_INTERVAL_SECONDS="${SMOKE_POLL_INTERVAL_SECONDS:-0.1}"
 SHUTDOWN_GRACE_SECONDS="${SMOKE_SHUTDOWN_GRACE_SECONDS:-15}"
 WORLD_FOLDER="${FOCUSED_SMOKE_WORLD_FOLDER:-tacz_focused_smoke_auto}"
 WORLD_NAME="${FOCUSED_SMOKE_WORLD_NAME:-tacz_focused_smoke_auto}"
+WORLD_TIME="${FOCUSED_SMOKE_WORLD_TIME:-}"
+FREEZE_WORLD_TIME="${FOCUSED_SMOKE_FREEZE_WORLD_TIME:-auto}"
+CLEAR_WEATHER="${FOCUSED_SMOKE_CLEAR_WEATHER:-auto}"
 REGULAR_GUN="${FOCUSED_SMOKE_REGULAR_GUN:-}"
 if [[ ${FOCUSED_SMOKE_EXPLOSIVE_GUN+x} ]]; then
   EXPLOSIVE_GUN="$FOCUSED_SMOKE_EXPLOSIVE_GUN"
@@ -31,6 +34,9 @@ REFIT_TYPE="${FOCUSED_SMOKE_REFIT_TYPE:-}"
 PASS_AFTER_ANIMATION="${FOCUSED_SMOKE_PASS_AFTER_ANIMATION:-false}"
 PASS_AFTER_REFIT="${FOCUSED_SMOKE_PASS_AFTER_REFIT:-false}"
 SKIP_RELOAD="${FOCUSED_SMOKE_SKIP_RELOAD:-false}"
+BULLET_SPEED_MULTIPLIER="${FOCUSED_SMOKE_BULLET_SPEED_MULTIPLIER:-}"
+TRACER_SIZE_MULTIPLIER="${FOCUSED_SMOKE_TRACER_SIZE_MULTIPLIER:-}"
+TRACER_LENGTH_MULTIPLIER="${FOCUSED_SMOKE_TRACER_LENGTH_MULTIPLIER:-}"
 AUDIO_BACKEND="${TACZ_AUDIO_BACKEND:-diagnostic}"
 AUDIO_PREFLIGHT="${TACZ_AUDIO_PREFLIGHT:-true}"
 AUDIO_PREFLIGHT_STRICT="${TACZ_AUDIO_PREFLIGHT_STRICT:-false}"
@@ -45,6 +51,22 @@ SCREENSHOT_PLAN="${FOCUSED_SMOKE_SCREENSHOT_PLAN:-inspect_0s|\\[FocusedSmoke] IN
 SCREENSHOT_POST_PASS_GRACE_SECONDS="${FOCUSED_SMOKE_SCREENSHOT_POST_PASS_GRACE_SECONDS:-2}"
 SCREENSHOT_ARCHIVE_ROOT="$OUT_DIR/focused-smoke-screenshots"
 SCREENSHOT_LATEST_FILE="/tmp/agent_workspace_screenshot.png"
+
+if [[ "$FREEZE_WORLD_TIME" == "auto" ]]; then
+  if [[ -n "$WORLD_TIME" ]]; then
+    FREEZE_WORLD_TIME="true"
+  else
+    FREEZE_WORLD_TIME="false"
+  fi
+fi
+
+if [[ "$CLEAR_WEATHER" == "auto" ]]; then
+  if [[ -n "$WORLD_TIME" ]]; then
+    CLEAR_WEATHER="true"
+  else
+    CLEAR_WEATHER="false"
+  fi
+fi
 
 SUCCESS_PATTERN="\\[FocusedSmoke] PASS"
 FAIL_PATTERN="\\[FocusedSmoke] FAIL"
@@ -265,6 +287,8 @@ GRADLE_CMD=(
   -Dtacz.focusedSmoke.autoWorld=true
   "-Dtacz.focusedSmoke.worldFolder=${WORLD_FOLDER}"
   "-Dtacz.focusedSmoke.worldName=${WORLD_NAME}"
+  "-Dtacz.focusedSmoke.freezeWorldTime=${FREEZE_WORLD_TIME}"
+  "-Dtacz.focusedSmoke.clearWeather=${CLEAR_WEATHER}"
   "-Dtacz.focusedSmoke.explosiveGun=${EXPLOSIVE_GUN}"
   "-Dtacz.focusedSmoke.disableExplosive=${DISABLE_EXPLOSIVE}"
   "-Dtacz.focusedSmoke.disableAttachments=${DISABLE_ATTACHMENTS}"
@@ -278,11 +302,23 @@ GRADLE_CMD=(
   runClient
   --console=plain
 )
+if [[ -n "$WORLD_TIME" ]]; then
+  GRADLE_CMD+=("-Dtacz.focusedSmoke.worldTime=${WORLD_TIME}")
+fi
 if [[ -n "$REGULAR_GUN" ]]; then
   GRADLE_CMD+=("-Dtacz.focusedSmoke.regularGun=${REGULAR_GUN}")
 fi
 if [[ -n "$REFIT_TYPE" ]]; then
   GRADLE_CMD+=("-Dtacz.focusedSmoke.refitType=${REFIT_TYPE}")
+fi
+if [[ -n "$BULLET_SPEED_MULTIPLIER" ]]; then
+  GRADLE_CMD+=("-Dtacz.focusedSmoke.bulletSpeedMultiplier=${BULLET_SPEED_MULTIPLIER}")
+fi
+if [[ -n "$TRACER_SIZE_MULTIPLIER" ]]; then
+  GRADLE_CMD+=("-Dtacz.focusedSmoke.tracerSizeMultiplier=${TRACER_SIZE_MULTIPLIER}")
+fi
+if [[ -n "$TRACER_LENGTH_MULTIPLIER" ]]; then
+  GRADLE_CMD+=("-Dtacz.focusedSmoke.tracerLengthMultiplier=${TRACER_LENGTH_MULTIPLIER}")
 fi
 if [[ "$USE_XVFB" == "auto" ]]; then
   if [[ "$ENABLE_SCREENSHOT" == "true" ]]; then

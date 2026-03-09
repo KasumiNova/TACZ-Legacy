@@ -56,6 +56,7 @@ internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData
     internal companion object {
         private const val DEFAULT_FORWARD_COMPONENT = 8.0
         private const val DEFAULT_INACCURACY_SCALE = 0.007499999832361937
+        private const val FOCUSED_SMOKE_BULLET_SPEED_MULTIPLIER_PROPERTY = "tacz.focusedSmoke.bulletSpeedMultiplier"
 
         internal fun computeShotDirection(pitch: Double, yaw: Double, spreadX: Double, spreadY: Double): Vec3d {
             val direction = Vector3d(spreadX, spreadY, DEFAULT_FORWARD_COMPONENT)
@@ -66,6 +67,15 @@ internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData
                 return Vec3d.ZERO
             }
             return Vec3d(direction.x / length, direction.y / length, direction.z / length)
+        }
+
+        private fun resolveFocusedSmokeBulletSpeedMultiplier(): Double {
+            val rawValue = System.getProperty(FOCUSED_SMOKE_BULLET_SPEED_MULTIPLIER_PROPERTY)?.toDoubleOrNull()
+                ?: return 1.0
+            if (!rawValue.isFinite() || rawValue <= 0.0) {
+                return 1.0
+            }
+            return rawValue
         }
     }
 
@@ -178,7 +188,8 @@ internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData
     }
 
     internal fun shootFromRotation(shooter: Entity, pitch: Float, yaw: Float, velocity: Float, spreadX: Double, spreadY: Double) {
-        val direction = computeShotDirection(pitch.toDouble(), yaw.toDouble(), spreadX, spreadY).scale(velocity.toDouble())
+        val actualVelocity = velocity.toDouble() * resolveFocusedSmokeBulletSpeedMultiplier()
+        val direction = computeShotDirection(pitch.toDouble(), yaw.toDouble(), spreadX, spreadY).scale(actualVelocity)
         motionX = direction.x
         motionY = direction.y
         motionZ = direction.z

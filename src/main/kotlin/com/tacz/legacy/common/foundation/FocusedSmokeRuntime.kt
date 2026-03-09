@@ -23,6 +23,7 @@ import com.tacz.legacy.common.resource.TACZLoadedGun
 import com.tacz.legacy.common.resource.TACZRuntimeSnapshot
 import net.minecraft.entity.player.EntityPlayerMP
 import net.minecraft.item.ItemStack
+import net.minecraft.server.MinecraftServer
 import net.minecraft.util.ResourceLocation
 import net.minecraftforge.event.entity.EntityJoinWorldEvent
 import net.minecraftforge.event.world.ExplosionEvent
@@ -246,6 +247,9 @@ internal object FocusedSmokeRuntime {
     private const val REGULAR_GUN_PROPERTY: String = "tacz.focusedSmoke.regularGun"
     private const val WORLD_FOLDER_PROPERTY: String = "tacz.focusedSmoke.worldFolder"
     private const val WORLD_NAME_PROPERTY: String = "tacz.focusedSmoke.worldName"
+    private const val WORLD_TIME_PROPERTY: String = "tacz.focusedSmoke.worldTime"
+    private const val FREEZE_WORLD_TIME_PROPERTY: String = "tacz.focusedSmoke.freezeWorldTime"
+    private const val CLEAR_WEATHER_PROPERTY: String = "tacz.focusedSmoke.clearWeather"
     private const val EXPLOSIVE_GUN_PROPERTY: String = "tacz.focusedSmoke.explosiveGun"
     private const val DISABLE_EXPLOSIVE_PROPERTY: String = "tacz.focusedSmoke.disableExplosive"
     private const val DISABLE_ATTACHMENTS_PROPERTY: String = "tacz.focusedSmoke.disableAttachments"
@@ -256,6 +260,9 @@ internal object FocusedSmokeRuntime {
     private const val SKIP_RELOAD_PROPERTY: String = "tacz.focusedSmoke.skipReload"
     private const val REGULAR_SHOT_PITCH_PROPERTY: String = "tacz.focusedSmoke.regularShotPitch"
     private const val REGULAR_SHOT_YAW_PROPERTY: String = "tacz.focusedSmoke.regularShotYaw"
+    private const val BULLET_SPEED_MULTIPLIER_PROPERTY: String = "tacz.focusedSmoke.bulletSpeedMultiplier"
+    private const val TRACER_SIZE_MULTIPLIER_PROPERTY: String = "tacz.focusedSmoke.tracerSizeMultiplier"
+    private const val TRACER_LENGTH_MULTIPLIER_PROPERTY: String = "tacz.focusedSmoke.tracerLengthMultiplier"
 
     private val loggedKeys = ConcurrentHashMap.newKeySet<String>()
 
@@ -321,6 +328,15 @@ internal object FocusedSmokeRuntime {
     internal val worldDisplayName: String
         get() = System.getProperty(WORLD_NAME_PROPERTY, "tacz_focused_smoke_auto")
 
+    internal val forcedWorldTime: Long?
+        get() = System.getProperty(WORLD_TIME_PROPERTY)?.toLongOrNull()
+
+    internal val freezeWorldTimeEnabled: Boolean
+        get() = System.getProperty(FREEZE_WORLD_TIME_PROPERTY, if (forcedWorldTime != null) "true" else "false").toBoolean()
+
+    internal val clearWeatherEnabled: Boolean
+        get() = System.getProperty(CLEAR_WEATHER_PROPERTY, if (forcedWorldTime != null) "true" else "false").toBoolean()
+
     internal val forcedRegularGunId: ResourceLocation?
         get() = parseResourceLocation(System.getProperty(REGULAR_GUN_PROPERTY))
 
@@ -353,6 +369,15 @@ internal object FocusedSmokeRuntime {
 
     internal val regularShotYawOverride: Float?
         get() = System.getProperty(REGULAR_SHOT_YAW_PROPERTY)?.toFloatOrNull()
+
+    internal val bulletSpeedMultiplier: Float
+        get() = parsePositiveFloatProperty(BULLET_SPEED_MULTIPLIER_PROPERTY)
+
+    internal val tracerSizeMultiplier: Float
+        get() = parsePositiveFloatProperty(TRACER_SIZE_MULTIPLIER_PROPERTY)
+
+    internal val tracerLengthMultiplier: Float
+        get() = parsePositiveFloatProperty(TRACER_LENGTH_MULTIPLIER_PROPERTY)
 
     @Synchronized
     internal fun currentPlan(snapshot: TACZRuntimeSnapshot = TACZGunPackRuntimeRegistry.getSnapshot()): FocusedSmokePlan? {
@@ -434,6 +459,14 @@ internal object FocusedSmokeRuntime {
             return null
         }
         return runCatching { ResourceLocation(value.trim()) }.getOrNull()
+    }
+
+    private fun parsePositiveFloatProperty(name: String): Float {
+        val rawValue = System.getProperty(name)?.toFloatOrNull() ?: return 1.0f
+        if (!rawValue.isFinite() || rawValue <= 0.0f) {
+            return 1.0f
+        }
+        return rawValue
     }
 
     internal fun rememberFocusedPlayer(player: EntityPlayerMP) {
@@ -595,12 +628,57 @@ internal object FocusedSmokeRuntime {
 
         player.inventory.markDirty()
         player.inventoryContainer.detectAndSendChanges()
+        applyWorldVisualOverrides(player.server)
+        logCaptureOverrides()
         serverGearReady = true
         val attachmentText = plan.attachmentSummary()
         logOnce(
             "server-gear-ready",
             "SERVER_GEAR_READY regularGun=${plan.regularGunId} explosiveGun=${plan.explosiveGunId ?: "none"} attachment=$attachmentText"
         )
+    }
+
+    private fun logCaptureOverrides() {
+        val bulletSpeed = bulletSpeedMultiplier
+        val tracerSize = tracerSizeMultiplier
+        val tracerLength = tracerLengthMultiplier
+        if (bulletSpeed == 1.0f && tracerSize == 1.0f && tracerLength == 1.0f) {
+            return
+        }
+        logOnce(
+            "capture-overrides",
+            "TRACER_CAPTURE_OVERRIDES bulletSpeedMultiplier=$bulletSpeed tracerSizeMultiplier=$tracerSize tracerLengthMultiplier=$tracerLength"
+        )
+    }
+
+    private fun applyWorldVisualOverrides(server: MinecraftServer) {
+        val forcedTime = forcedWorldTime
+        val freezeTime = freezeWorldTimeEnabled
+        val clearWeather = clearWeatherEnabled
+        if (forcedTime == null && !clearWeather) {
+            return
+        }
+        server.worlds
+            .asSequence()
+            .filterNotNull()
+            .forEach { world ->
+                if (forcedTime != null) {
+                    world.setWorldTime(forcedTime)
+                    world.gameRules.setOrCreateGameRule("doDaylightCycle", (!freezeTime).toString())
+                }
+                if (clearWeather) {
+                    world.worldInfo.setCleanWeatherTime(Int.MAX_VALUE)
+                    world.worldInfo.setRainTime(0)
+                    world.worldInfo.setRaining(false)
+                    world.worldInfo.setThunderTime(0)
+                    world.worldInfo.setThundering(false)
+                    world.gameRules.setOrCreateGameRule("doWeatherCycle", "false")
+                }
+                logOnce(
+                    "world-visual-${world.provider.dimension}",
+                    "WORLD_VISUAL_OVERRIDES dimension=${world.provider.dimension} worldTime=${forcedTime ?: "unchanged"} freezeTime=$freezeTime clearWeather=$clearWeather"
+                )
+            }
     }
 
     private fun createGunStack(gunId: ResourceLocation): ItemStack {

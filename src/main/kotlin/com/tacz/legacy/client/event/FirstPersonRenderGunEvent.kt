@@ -39,9 +39,11 @@ import net.minecraftforge.fml.relauncher.SideOnly
 import org.joml.Matrix4f
 import org.joml.Quaternionf
 import org.joml.Vector3f
+import org.joml.Vector4f
 import org.lwjgl.BufferUtils
 import org.lwjgl.opengl.GL11
 import java.nio.FloatBuffer
+import java.nio.IntBuffer
 import kotlin.math.abs
 import kotlin.math.tan
 
@@ -82,10 +84,15 @@ internal object FirstPersonRenderGunEvent {
     private var lastRenderedModel: BedrockAnimatedModel? = null
     private val positioningMatrixBuffer: FloatBuffer = BufferUtils.createFloatBuffer(16)
     private val muzzleMatrixBuffer: FloatBuffer = BufferUtils.createFloatBuffer(16)
+    private val muzzleProjectionBuffer: FloatBuffer = BufferUtils.createFloatBuffer(16)
+    private val muzzleViewportBuffer: IntBuffer = BufferUtils.createIntBuffer(16)
     private var loggedFirstPersonRender = false
     private var cachedMuzzleRenderOffset: Vector3f? = null
     private var cachedCameraPitch: Float? = null
     private var cachedCameraYaw: Float? = null
+    private var cachedMuzzleCameraPitch: Float? = null
+    private var cachedMuzzleCameraYaw: Float? = null
+    private var cachedMuzzleFrameId: Long? = null
     private var cachedMuzzleGunId: ResourceLocation? = null
     private var lastCameraAnimationLoggedShootTimestamp: Long = Long.MIN_VALUE
     private var renderFrameId: Long = 0L
@@ -136,6 +143,15 @@ internal object FirstPersonRenderGunEvent {
 
     @JvmStatic
     internal fun getCachedCameraYaw(): Float? = cachedCameraYaw
+
+    @JvmStatic
+    internal fun getCachedMuzzleCameraPitch(): Float? = cachedMuzzleCameraPitch
+
+    @JvmStatic
+    internal fun getCachedMuzzleCameraYaw(): Float? = cachedMuzzleCameraYaw
+
+    @JvmStatic
+    internal fun getCachedMuzzleFrameId(): Long? = cachedMuzzleFrameId
 
     @JvmStatic
     internal fun getCachedMuzzleGunId(): ResourceLocation? = cachedMuzzleGunId
@@ -349,6 +365,9 @@ internal object FirstPersonRenderGunEvent {
         if (mc.gameSettings.thirdPersonView == 0 && renderedMainItem.item !is IGun) {
             lastRenderedModel = null
             cachedMuzzleRenderOffset = null
+            cachedMuzzleCameraPitch = null
+            cachedMuzzleCameraYaw = null
+            cachedMuzzleFrameId = null
         }
         if (mc.gameSettings.thirdPersonView != 0) {
             LegacyClientGunAnimationDriver.visualUpdateHeldGun(player, event.renderTickTime)
@@ -369,6 +388,9 @@ internal object FirstPersonRenderGunEvent {
             lastStateMachine = null
             lastRenderedModel = null
             cachedMuzzleRenderOffset = null
+            cachedMuzzleCameraPitch = null
+            cachedMuzzleCameraYaw = null
+            cachedMuzzleFrameId = null
             return null
         }
         val gunId = iGun.getGunId(stack)
@@ -713,6 +735,9 @@ internal object FirstPersonRenderGunEvent {
         val muzzlePath = model.muzzleFlashPosPath
         if (muzzlePath == null || muzzlePath.isEmpty()) {
             cachedMuzzleRenderOffset = null
+            cachedMuzzleCameraPitch = null
+            cachedMuzzleCameraYaw = null
+            cachedMuzzleFrameId = null
             cachedMuzzleGunId = null
             return
         }
@@ -726,10 +751,14 @@ internal object FirstPersonRenderGunEvent {
             poseMatrix.set(muzzleMatrixBuffer)
             val zFovScale = resolveItemToWorldFovScale(partialTicks)
             cachedMuzzleRenderOffset = Vector3f(poseMatrix.m30(), poseMatrix.m31(), poseMatrix.m32() * zFovScale)
+            cachedMuzzleCameraYaw = cachedCameraYaw
+            cachedMuzzleCameraPitch = cachedCameraPitch
+            cachedMuzzleFrameId = renderFrameId
             cachedMuzzleGunId = model.currentGunItem.takeIf { !it.isEmpty }?.let {
                 (it.item as? IGun)?.getGunId(it)
             }
             logTracerDebugMuzzleOffset(partialTicks, zFovScale)
+            logTracerDebugMuzzleScreenPosition()
         } finally {
             GlStateManager.popMatrix()
         }
@@ -766,17 +795,66 @@ internal object FirstPersonRenderGunEvent {
         val itemRenderFov = renderer?.`tacz$invokeGetFOVModifier`(partialTicks, false) ?: 0.0f
         val worldRenderFov = renderer?.`tacz$invokeGetFOVModifier`(partialTicks, true) ?: 0.0f
         TACZLegacy.logger.info(
-            "[TracerDebug] MUZZLE_OFFSET gun={} offset=({},{},{}) cameraYaw={} cameraPitch={} itemFov={} worldFov={} zScale={}",
+            "[TracerDebug] MUZZLE_OFFSET gun={} offset=({},{},{}) cameraYaw={} cameraPitch={} frameId={} itemFov={} worldFov={} zScale={}",
             gunId,
             "%.4f".format(offset.x),
             "%.4f".format(offset.y),
             "%.4f".format(offset.z),
-            "%.4f".format(cachedCameraYaw ?: 0.0f),
-            "%.4f".format(cachedCameraPitch ?: 0.0f),
+            "%.4f".format(cachedMuzzleCameraYaw ?: 0.0f),
+            "%.4f".format(cachedMuzzleCameraPitch ?: 0.0f),
+            cachedMuzzleFrameId ?: -1L,
             "%.4f".format(itemRenderFov),
             "%.4f".format(worldRenderFov),
             "%.4f".format(zFovScale),
         )
+    }
+
+    private fun logTracerDebugMuzzleScreenPosition() {
+        if (!tracerDebugEnabled) {
+            return
+        }
+        val gunId = cachedMuzzleGunId ?: return
+        TACZLegacy.logger.info(
+            "[TracerDebug] MUZZLE_SCREEN gun={} frameId={} screen={} cameraYaw={} cameraPitch={}",
+            gunId,
+            cachedMuzzleFrameId ?: -1L,
+            projectCurrentPoint(0.0f, 0.0f, 0.0f),
+            "%.4f".format(cachedMuzzleCameraYaw ?: 0.0f),
+            "%.4f".format(cachedMuzzleCameraPitch ?: 0.0f),
+        )
+    }
+
+    private fun projectCurrentPoint(x: Float, y: Float, z: Float): String {
+        muzzleMatrixBuffer.clear()
+        muzzleProjectionBuffer.clear()
+        muzzleViewportBuffer.clear()
+        GL11.glGetFloat(GL11.GL_MODELVIEW_MATRIX, muzzleMatrixBuffer)
+        GL11.glGetFloat(GL11.GL_PROJECTION_MATRIX, muzzleProjectionBuffer)
+        GL11.glGetInteger(GL11.GL_VIEWPORT, muzzleViewportBuffer)
+        muzzleMatrixBuffer.rewind()
+        muzzleProjectionBuffer.rewind()
+        muzzleViewportBuffer.rewind()
+
+        val modelView = Matrix4f().set(muzzleMatrixBuffer)
+        val projection = Matrix4f().set(muzzleProjectionBuffer)
+        val viewportX = muzzleViewportBuffer.get(0)
+        val viewportY = muzzleViewportBuffer.get(1)
+        val viewportWidth = muzzleViewportBuffer.get(2)
+        val viewportHeight = muzzleViewportBuffer.get(3)
+
+        val clip = Vector4f(x, y, z, 1.0f)
+        modelView.transform(clip)
+        projection.transform(clip)
+        if (abs(clip.w) <= 1.0E-6f) {
+            return "null"
+        }
+        val invW = 1.0f / clip.w
+        val ndcX = clip.x * invW
+        val ndcY = clip.y * invW
+        val ndcZ = clip.z * invW
+        val screenX = viewportX + (ndcX + 1.0f) * 0.5f * viewportWidth
+        val screenY = viewportY + (ndcY + 1.0f) * 0.5f * viewportHeight
+        return "(%.1f,%.1f,%.4f)".format(screenX, screenY, ndcZ)
     }
 
     private fun resolveItemToWorldFovScale(partialTicks: Float): Float {
