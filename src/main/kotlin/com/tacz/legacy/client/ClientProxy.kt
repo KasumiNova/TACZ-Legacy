@@ -4,8 +4,10 @@ import com.tacz.legacy.TACZLegacy
 import com.tacz.legacy.client.animation.screen.RefitTransform
 import com.tacz.legacy.client.audio.TACZClientAudioHooks
 import com.tacz.legacy.client.event.FirstPersonRenderGunEvent
+import com.tacz.legacy.client.event.LegacyClientHitMarkHandler
 import com.tacz.legacy.client.event.LegacyClientInputEventHandler
 import com.tacz.legacy.client.event.LegacyClientOverlayEventHandler
+import com.tacz.legacy.client.event.TACZCameraRecoilHandler
 import com.tacz.legacy.client.foundation.FocusedSmokeClientHooks
 import com.tacz.legacy.client.gui.GunSmithTableScreen
 import com.tacz.legacy.client.input.LegacyKeyBindings
@@ -41,6 +43,7 @@ internal class ClientProxy : CommonProxy() {
         MinecraftForge.EVENT_BUS.register(ModelRegisterer)
         MinecraftForge.EVENT_BUS.register(ClientConfigEventHandler)
         MinecraftForge.EVENT_BUS.register(TACZClientAudioHooks)
+        MinecraftForge.EVENT_BUS.register(LegacyClientHitMarkHandler)
         MinecraftForge.EVENT_BUS.register(LegacyClientInputEventHandler)
         MinecraftForge.EVENT_BUS.register(LegacyClientOverlayEventHandler)
         MinecraftForge.EVENT_BUS.register(FocusedSmokeClientHooks)
@@ -49,6 +52,7 @@ internal class ClientProxy : CommonProxy() {
         // FirstPersonRenderGunEvent uses @JvmStatic handlers on a Kotlin object.
         // Forge 1.12 only scans static subscribers when registering the class itself.
         MinecraftForge.EVENT_BUS.register(FirstPersonRenderGunEvent::class.java)
+        MinecraftForge.EVENT_BUS.register(TACZCameraRecoilHandler::class.java)
     }
 
     override fun preInit(): Unit {

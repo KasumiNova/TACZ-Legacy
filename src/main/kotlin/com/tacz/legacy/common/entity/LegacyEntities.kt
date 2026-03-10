@@ -1,10 +1,15 @@
 package com.tacz.legacy.common.entity
 
 import com.tacz.legacy.TACZLegacy
+import com.tacz.legacy.api.event.EntityHurtByGunEvent
+import com.tacz.legacy.api.event.EntityKillByGunEvent
 import com.tacz.legacy.common.resource.BulletCombatData
 import com.tacz.legacy.common.resource.DistanceDamagePoint
 import com.tacz.legacy.common.config.HeadShotAabbConfigRead
 import com.tacz.legacy.common.config.LegacyConfigManager
+import com.tacz.legacy.common.network.TACZNetworkHandler
+import com.tacz.legacy.common.network.message.event.ServerMessageGunHurt
+import com.tacz.legacy.common.network.message.event.ServerMessageGunKill
 import io.netty.buffer.ByteBuf
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityList
@@ -21,6 +26,7 @@ import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.RayTraceResult
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.World
+import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.fml.common.registry.EntityEntry
 import net.minecraftforge.fml.common.registry.EntityEntryBuilder
 import net.minecraftforge.fml.common.registry.IEntityAdditionalSpawnData
@@ -38,7 +44,7 @@ internal object LegacyEntities {
         .entity(EntityKineticBullet::class.java)
         .id(ResourceLocation(TACZLegacy.MOD_ID, "bullet"), 0)
         .name("bullet")
-        .tracker(64, 1, true)
+        .tracker(64, 1, false)
         .build()
 
     internal val TARGET_MINECART: EntityEntry = EntityEntryBuilder.create<TargetMinecartEntity>()
@@ -55,6 +61,13 @@ internal object LegacyEntities {
 }
 
 internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData {
+    private data class HitFeedbackResult(
+        val appliedDamage: Boolean,
+        val baseDamage: Float,
+        val headShotMultiplier: Float,
+        val headShot: Boolean,
+    )
+
     internal companion object {
         private const val DEFAULT_FORWARD_COMPONENT = 8.0
         private const val DEFAULT_INACCURACY_SCALE = 0.007499999832361937
@@ -245,6 +258,9 @@ internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData
         ByteBufUtils.writeUTF8String(buffer, ammoId.toString())
         buffer.writeBoolean(isTracerAmmo)
         buffer.writeInt(shooterEntityId)
+        buffer.writeFloat(bulletGravity)
+        buffer.writeFloat(friction)
+        buffer.writeInt(lifespan)
     }
 
     override fun readSpawnData(additionalData: ByteBuf) {
@@ -260,6 +276,9 @@ internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData
         ammoId = ResourceLocation(ByteBufUtils.readUTF8String(additionalData))
         isTracerAmmo = additionalData.readBoolean()
         shooterEntityId = additionalData.readInt()
+        bulletGravity = additionalData.readFloat()
+        friction = additionalData.readFloat()
+        lifespan = additionalData.readInt()
         getShooterForRender()
         if (world.isRemote && java.lang.Boolean.getBoolean("tacz.focusedSmoke")) {
             TACZLegacy.logger.info(
@@ -284,13 +303,16 @@ internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData
             RayTraceResult.Type.ENTITY -> {
                 val target = result.entityHit ?: return
                 val hitPos = result.hitVec ?: Vec3d(target.posX, target.posY + target.height * 0.5, target.posZ)
+                val headShot = target is EntityLivingBase && isHeadShot(target, hitPos)
                 if (target != thrower) {
-                    applyDirectHitDamage(target, hitPos)
-                }
-                if (hasExplosion) {
-                    triggerExplosion(hitPos)
-                    setDead()
-                    return
+                    val feedback = applyDirectHitDamage(target, hitPos, headShot)
+                    if (hasExplosion) {
+                        triggerExplosion(hitPos)
+                        emitHitFeedback(target, feedback)
+                        setDead()
+                        return
+                    }
+                    emitHitFeedback(target, feedback)
                 }
                 pierce--
                 if (pierce <= 0) setDead()
@@ -436,6 +458,17 @@ internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData
         setPosition(x, y, z)
     }
 
+    /**
+     * Block velocity sync packets from overwriting client motion vectors.
+     * Upstream uses [setShouldReceiveVelocityUpdates(false)] so the client
+     * computes position/motion locally from spawn data + physics. In 1.12
+     * we set tracker to not send velocity, but override this as extra safety.
+     */
+    @SideOnly(Side.CLIENT)
+    override fun setVelocity(x: Double, y: Double, z: Double) {
+        // no-op: client computes motion locally
+    }
+
     override fun onUpdate() {
         // 完全绕过 EntityThrowable.onUpdate() 的碰撞检测、0.99f 拖拽与 0.2 旋转插值。
         // 与上游 TACZ EntityKineticBullet.tick() + onBulletTick() 逻辑对齐。
@@ -519,8 +552,10 @@ internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData
         }
         rotationYaw = lerpRotation(prevRotationYaw, targetYaw)
         rotationPitch = lerpRotation(prevRotationPitch, targetPitch)
-        prevRotationPitch = rotationPitch
-        prevRotationYaw = rotationYaw
+        // Do NOT set prevRotation = rotation here.
+        // Entity.onEntityUpdate() sets prev = current at the START of each tick,
+        // matching upstream TACZ where super.tick() → Entity.tick() does the same.
+        // Setting it here kills render-frame interpolation (prev == current → no lerp).
 
         setPosition(posX, posY, posZ)
 
@@ -547,30 +582,102 @@ internal class EntityKineticBullet : EntityThrowable, IEntityAdditionalSpawnData
         return previous + delta * 0.2f
     }
 
-    private fun applyDirectHitDamage(target: Entity, hitPosition: Vec3d) {
+    private fun applyDirectHitDamage(target: Entity, hitPosition: Vec3d, headShot: Boolean): HitFeedbackResult {
         val totalDamage = resolveEffectiveDamageAt(hitPosition)
         if (totalDamage <= 0.0f) {
-            return
+            return HitFeedbackResult(false, 0.0f, 1.0f, headShot)
         }
-        val isHeadShot = target is EntityLivingBase && isHeadShot(target, hitPosition)
-        val headShotDamage = if (isHeadShot) totalDamage * headShotMultiplier else totalDamage
+        val headShotDamage = if (headShot) totalDamage * headShotMultiplier else totalDamage
         val damageSplit = splitDamage(headShotDamage)
         if (target is EntityLivingBase) {
             target.hurtResistantTime = 0
         }
+        var applied = false
         if (damageSplit.first > 0.0f) {
-            target.attackEntityFrom(createBulletDamageSource(ignoreArmor = false), damageSplit.first)
+            applied = target.attackEntityFrom(createBulletDamageSource(ignoreArmor = false), damageSplit.first) || applied
         }
         if (damageSplit.second > 0.0f) {
             if (target is EntityLivingBase) {
                 target.hurtResistantTime = 0
             }
-            target.attackEntityFrom(createBulletDamageSource(ignoreArmor = true), damageSplit.second)
+            applied = target.attackEntityFrom(createBulletDamageSource(ignoreArmor = true), damageSplit.second) || applied
         }
         applyImpactKnockback(target)
         if (igniteEntity && !target.world.isRemote && LegacyConfigManager.common.igniteEntity) {
             target.setFire(igniteEntityTime)
         }
+        return HitFeedbackResult(
+            appliedDamage = applied,
+            baseDamage = totalDamage,
+            headShotMultiplier = if (headShot) headShotMultiplier else 1.0f,
+            headShot = headShot,
+        )
+    }
+
+    private fun emitHitFeedback(target: Entity, feedback: HitFeedbackResult) {
+        if (world.isRemote) {
+            return
+        }
+        if (!feedback.appliedDamage) {
+            return
+        }
+        val attacker = thrower as? EntityLivingBase
+        if (target is EntityLivingBase && !target.isEntityAlive) {
+            MinecraftForge.EVENT_BUS.post(
+                EntityKillByGunEvent(
+                    bullet = this,
+                    killedEntity = target,
+                    attacker = attacker,
+                    gunId = gunId,
+                    gunDisplayId = gunDisplayId,
+                    baseDamage = feedback.baseDamage,
+                    isHeadShot = feedback.headShot,
+                    headShotMultiplier = feedback.headShotMultiplier,
+                    logicalSide = Side.SERVER,
+                ),
+            )
+            TACZNetworkHandler.sendToDimension(
+                ServerMessageGunKill(
+                    bulletId = entityId,
+                    killedEntityId = target.entityId,
+                    attackerId = attacker?.entityId ?: -1,
+                    gunId = gunId,
+                    gunDisplayId = gunDisplayId,
+                    baseDamage = feedback.baseDamage,
+                    isHeadShot = feedback.headShot,
+                    headShotMultiplier = feedback.headShotMultiplier,
+                ),
+                world.provider.dimension,
+            )
+            return
+        }
+
+        MinecraftForge.EVENT_BUS.post(
+            EntityHurtByGunEvent.Post(
+                bullet = this,
+                hurtEntity = target,
+                attacker = attacker,
+                gunId = gunId,
+                gunDisplayId = gunDisplayId,
+                baseAmount = feedback.baseDamage,
+                isHeadShot = feedback.headShot,
+                headShotMultiplier = feedback.headShotMultiplier,
+                logicalSide = Side.SERVER,
+            ),
+        )
+        TACZNetworkHandler.sendToDimension(
+            ServerMessageGunHurt(
+                bulletId = entityId,
+                hurtEntityId = target.entityId,
+                attackerId = attacker?.entityId ?: -1,
+                gunId = gunId,
+                gunDisplayId = gunDisplayId,
+                baseAmount = feedback.baseDamage,
+                isHeadShot = feedback.headShot,
+                headShotMultiplier = feedback.headShotMultiplier,
+            ),
+            world.provider.dimension,
+        )
     }
 
     private fun createBulletDamageSource(ignoreArmor: Boolean): DamageSource {

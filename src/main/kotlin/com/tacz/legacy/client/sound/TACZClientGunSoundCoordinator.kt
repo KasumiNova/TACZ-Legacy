@@ -127,6 +127,36 @@ internal object TACZClientGunSoundCoordinator {
         )
     }
 
+    internal fun playHeadHitSound(entity: Entity, display: GunDisplayInstance?) {
+        GunSoundPlayManager.playClientSound(
+            entity,
+            display?.getSound(SoundManager.HEAD_HIT_SOUND),
+            1.0f,
+            1.0f,
+            LegacyConfigManager.common.defaultGunOtherSoundDistance,
+        )
+    }
+
+    internal fun playFleshHitSound(entity: Entity, display: GunDisplayInstance?) {
+        GunSoundPlayManager.playClientSound(
+            entity,
+            display?.getSound(SoundManager.FLESH_HIT_SOUND),
+            1.0f,
+            1.0f,
+            LegacyConfigManager.common.defaultGunOtherSoundDistance,
+        )
+    }
+
+    internal fun playKillSound(entity: Entity, display: GunDisplayInstance?) {
+        GunSoundPlayManager.playClientSound(
+            entity,
+            display?.getSound(SoundManager.KILL_SOUND),
+            1.0f,
+            1.0f,
+            LegacyConfigManager.common.defaultGunOtherSoundDistance,
+        )
+    }
+
     private fun playFireSound(entity: Entity, soundId: net.minecraft.util.ResourceLocation?, volume: Float, pitch: Float, distance: Int) {
         GunSoundPlayManager.playClientSound(entity, soundId, volume, pitch, distance)
     }

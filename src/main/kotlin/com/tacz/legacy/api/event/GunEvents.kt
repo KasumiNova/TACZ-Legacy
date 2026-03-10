@@ -1,7 +1,9 @@
 package com.tacz.legacy.api.event
 
+import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.item.ItemStack
+import net.minecraft.util.ResourceLocation
 import net.minecraftforge.fml.common.eventhandler.Cancelable
 import net.minecraftforge.fml.common.eventhandler.Event
 import net.minecraftforge.fml.relauncher.Side
@@ -60,3 +62,62 @@ public class GunDrawEvent(
     public val currentGunItem: ItemStack,
     public val logicalSide: Side,
 ) : Event()
+
+/**
+ * 实体被枪械子弹命中后的事件。
+ * 当前 Legacy 迁移以 HUD / 音效反馈为主，暴露 Post 事件供客户端与服务端复用。
+ */
+public open class EntityHurtByGunEvent(
+    public val bullet: Entity?,
+    public val hurtEntity: Entity?,
+    public val attacker: EntityLivingBase?,
+    public val gunId: ResourceLocation,
+    public val gunDisplayId: ResourceLocation,
+    public val baseAmount: Float,
+    public val isHeadShot: Boolean,
+    public val headShotMultiplier: Float,
+    public val logicalSide: Side,
+) : Event() {
+    public val amount: Float
+        get() = if (isHeadShot) baseAmount * headShotMultiplier else baseAmount
+
+    public class Post(
+        bullet: Entity?,
+        hurtEntity: Entity?,
+        attacker: EntityLivingBase?,
+        gunId: ResourceLocation,
+        gunDisplayId: ResourceLocation,
+        baseAmount: Float,
+        isHeadShot: Boolean,
+        headShotMultiplier: Float,
+        logicalSide: Side,
+    ) : EntityHurtByGunEvent(
+        bullet = bullet,
+        hurtEntity = hurtEntity,
+        attacker = attacker,
+        gunId = gunId,
+        gunDisplayId = gunDisplayId,
+        baseAmount = baseAmount,
+        isHeadShot = isHeadShot,
+        headShotMultiplier = headShotMultiplier,
+        logicalSide = logicalSide,
+    )
+}
+
+/**
+ * 实体被枪械子弹击杀时触发。
+ */
+public class EntityKillByGunEvent(
+    public val bullet: Entity?,
+    public val killedEntity: EntityLivingBase?,
+    public val attacker: EntityLivingBase?,
+    public val gunId: ResourceLocation,
+    public val gunDisplayId: ResourceLocation,
+    public val baseDamage: Float,
+    public val isHeadShot: Boolean,
+    public val headShotMultiplier: Float,
+    public val logicalSide: Side,
+) : Event() {
+    public val amount: Float
+        get() = if (isHeadShot) baseDamage * headShotMultiplier else baseDamage
+}

@@ -34,13 +34,10 @@ REFIT_TYPE="${FOCUSED_SMOKE_REFIT_TYPE:-}"
 PASS_AFTER_ANIMATION="${FOCUSED_SMOKE_PASS_AFTER_ANIMATION:-false}"
 PASS_AFTER_REFIT="${FOCUSED_SMOKE_PASS_AFTER_REFIT:-false}"
 SKIP_RELOAD="${FOCUSED_SMOKE_SKIP_RELOAD:-false}"
+HIT_FEEDBACK_TARGET="${FOCUSED_SMOKE_SPAWN_HIT_TARGET:-false}"
 BULLET_SPEED_MULTIPLIER="${FOCUSED_SMOKE_BULLET_SPEED_MULTIPLIER:-}"
 TRACER_SIZE_MULTIPLIER="${FOCUSED_SMOKE_TRACER_SIZE_MULTIPLIER:-}"
 TRACER_LENGTH_MULTIPLIER="${FOCUSED_SMOKE_TRACER_LENGTH_MULTIPLIER:-}"
-REGULAR_SHOT_YAW="${FOCUSED_SMOKE_REGULAR_SHOT_YAW:-}"
-REGULAR_SHOT_PITCH="${FOCUSED_SMOKE_REGULAR_SHOT_PITCH:-}"
-REQUIRE_TRACER_FRAME="${FOCUSED_SMOKE_REQUIRE_TRACER_FRAME:-false}"
-TRACER_DEBUG="${FOCUSED_SMOKE_TRACER_DEBUG:-false}"
 AUDIO_BACKEND="${TACZ_AUDIO_BACKEND:-diagnostic}"
 AUDIO_PREFLIGHT="${TACZ_AUDIO_PREFLIGHT:-true}"
 AUDIO_PREFLIGHT_STRICT="${TACZ_AUDIO_PREFLIGHT_STRICT:-false}"
@@ -300,6 +297,7 @@ GRADLE_CMD=(
   "-Dtacz.focusedSmoke.passAfterAnimation=${PASS_AFTER_ANIMATION}"
   "-Dtacz.focusedSmoke.passAfterRefit=${PASS_AFTER_REFIT}"
   "-Dtacz.focusedSmoke.skipReload=${SKIP_RELOAD}"
+  "-Dtacz.focusedSmoke.hitFeedbackTarget=${HIT_FEEDBACK_TARGET}"
   "-Dtacz.audio.backend=${AUDIO_BACKEND}"
   "-Dtacz.audio.preflight=${AUDIO_PREFLIGHT}"
   "-Dtacz.audio.preflight.strict=${AUDIO_PREFLIGHT_STRICT}"
@@ -323,18 +321,6 @@ if [[ -n "$TRACER_SIZE_MULTIPLIER" ]]; then
 fi
 if [[ -n "$TRACER_LENGTH_MULTIPLIER" ]]; then
   GRADLE_CMD+=("-Dtacz.focusedSmoke.tracerLengthMultiplier=${TRACER_LENGTH_MULTIPLIER}")
-fi
-if [[ -n "$REGULAR_SHOT_YAW" ]]; then
-  GRADLE_CMD+=("-Dtacz.focusedSmoke.regularShotYaw=${REGULAR_SHOT_YAW}")
-fi
-if [[ -n "$REGULAR_SHOT_PITCH" ]]; then
-  GRADLE_CMD+=("-Dtacz.focusedSmoke.regularShotPitch=${REGULAR_SHOT_PITCH}")
-fi
-if [[ "$REQUIRE_TRACER_FRAME" == "true" ]]; then
-  GRADLE_CMD+=("-Dtacz.focusedSmoke.requireTracerFrame=true")
-fi
-if [[ "$TRACER_DEBUG" == "true" ]]; then
-  GRADLE_CMD+=("-Dtacz.tracerDebug=true")
 fi
 if [[ "$USE_XVFB" == "auto" ]]; then
   if [[ "$ENABLE_SCREENSHOT" == "true" ]]; then

@@ -36,6 +36,7 @@ internal object LegacyClientOverlayEventHandler {
     private val AUTO: ResourceLocation = ResourceLocation("tacz", "textures/hud/fire_mode_auto.png")
     private val BURST: ResourceLocation = ResourceLocation("tacz", "textures/hud/fire_mode_burst.png")
     private val HEAT_BASE: ResourceLocation = ResourceLocation("tacz", "textures/hud/heat_base.png")
+    private val HIT_ICON: ResourceLocation = ResourceLocation("tacz", "textures/crosshair/hit/hit_marker.png")
 
     private val currentAmmoFormat: DecimalFormat = DecimalFormat("000")
     private val currentAmmoFormatPercent: DecimalFormat = DecimalFormat("000%")
@@ -43,6 +44,7 @@ internal object LegacyClientOverlayEventHandler {
     private val heatPercentFormat: DecimalFormat = DecimalFormat("0.0%")
     private var heatScale: Float = 0.75f
     private var lastFocusedSmokeCrosshairKey: String? = null
+    private var lastFocusedSmokeHudKey: String? = null
 
     @SubscribeEvent
     fun onRenderCrosshair(event: RenderGameOverlayEvent.Pre) {
@@ -55,6 +57,7 @@ internal object LegacyClientOverlayEventHandler {
             return
         }
         event.isCanceled = true
+        renderHitMarker(mc)
 
         val gunStack = player.heldItemMainhand
         gunStack.item as? IGun ?: return
@@ -83,14 +86,42 @@ internal object LegacyClientOverlayEventHandler {
             return
         }
         renderGunHud(event)
+        renderKillAmountOverlay(event)
         renderInteractPrompt(event)
     }
 
+    private fun renderHitMarker(mc: Minecraft) {
+        val scaled = ScaledResolution(mc)
+        val snapshot = LegacyHitFeedbackState.currentHitMarkerSnapshot(
+            now = System.currentTimeMillis(),
+            startPosition = LegacyConfigManager.client.hitMarkerStartPosition.toFloat(),
+        ) ?: return
+
+        val x = scaled.scaledWidth / 2f - 8f
+        val y = scaled.scaledHeight / 2f - 8f
+        val red = 1f
+        val green = if (snapshot.headShotTint) 0f else 1f
+        val blue = if (snapshot.headShotTint) 0f else 1f
+
+        GlStateManager.pushMatrix()
+        GlStateManager.enableBlend()
+        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
+        GlStateManager.color(red, green, blue, snapshot.alpha)
+        mc.textureManager.bindTexture(HIT_ICON)
+        Gui.drawModalRectWithCustomSizedTexture((x - snapshot.offset).toInt(), (y - snapshot.offset).toInt(), 0f, 0f, 8, 8, 16f, 16f)
+        Gui.drawModalRectWithCustomSizedTexture((x + 8f + snapshot.offset).toInt(), (y - snapshot.offset).toInt(), 8f, 0f, 8, 8, 16f, 16f)
+        Gui.drawModalRectWithCustomSizedTexture((x - snapshot.offset).toInt(), (y + 8f + snapshot.offset).toInt(), 0f, 8f, 8, 8, 16f, 16f)
+        Gui.drawModalRectWithCustomSizedTexture((x + 8f + snapshot.offset).toInt(), (y + 8f + snapshot.offset).toInt(), 8f, 8f, 8, 8, 16f, 16f)
+        GlStateManager.color(1f, 1f, 1f, 1f)
+        GlStateManager.disableBlend()
+        GlStateManager.popMatrix()
+    }
+
     private fun renderGunHud(event: RenderGameOverlayEvent.Post): Unit {
-        if (!LegacyConfigManager.client.gunHudEnable || !LegacyInputExtraCheck.isInGame()) {
+        val mc = Minecraft.getMinecraft()
+        if (!shouldRenderPersistentGunHud(mc)) {
             return
         }
-        val mc = Minecraft.getMinecraft()
         val player = mc.player ?: return
         if (player.isSpectator || !IGun.mainHandHoldGun(player)) {
             return
@@ -127,8 +158,7 @@ internal object LegacyClientOverlayEventHandler {
         val reserveColor = if (!useInventoryAmmo && useDummyAmmo) 0x55FFFF else 0xAAAAAA
 
         // Resolve ammo count style from display JSON
-        val snapshot = TACZGunPackRuntimeRegistry.getSnapshot()
-        val displayId = TACZGunPackPresentation.resolveGunDisplayId(snapshot, gunId)
+        val displayId = LegacyRuntimeTooltipSupport.resolveGunDisplayId(stack, iGun)
         val gunDisplay = displayId?.let(TACZClientAssetManager::getGunDisplay)
         val ammoCountStyle = gunDisplay?.ammoCountStyle ?: AmmoCountStyle.NORMAL
 
@@ -142,6 +172,19 @@ internal object LegacyClientOverlayEventHandler {
             gunData.isReloadInfinite -> "∞"
             else -> reserveAmmoFormat.format(reserveAmmo)
         }
+        logFocusedSmokeHud(
+            screenName = mc.currentScreen?.javaClass?.simpleName ?: "null",
+            gunId = gunId,
+            displayId = displayId,
+            ammoCountStyle = ammoCountStyle,
+            useInventoryAmmo = useInventoryAmmo,
+            useDummyAmmo = useDummyAmmo,
+            currentAmmo = currentAmmo,
+            maxAmmo = maxAmmo,
+            reserveAmmo = reserveAmmo,
+            currentAmmoText = currentAmmoText,
+            reserveText = reserveText,
+        )
 
         val width = event.resolution.scaledWidth
         val height = event.resolution.scaledHeight
@@ -237,6 +280,62 @@ internal object LegacyClientOverlayEventHandler {
         com.tacz.legacy.TACZLegacy.logger.info("[FocusedSmoke] CROSSHAIR_RENDERED type={} texture={}", type.name.lowercase(Locale.ROOT), texture)
     }
 
+    private fun logFocusedSmokeHud(
+        screenName: String,
+        gunId: ResourceLocation,
+        displayId: ResourceLocation?,
+        ammoCountStyle: AmmoCountStyle,
+        useInventoryAmmo: Boolean,
+        useDummyAmmo: Boolean,
+        currentAmmo: Int,
+        maxAmmo: Int,
+        reserveAmmo: Int,
+        currentAmmoText: String,
+        reserveText: String,
+    ) {
+        if (!System.getProperty("tacz.focusedSmoke", "false").toBoolean()) {
+            return
+        }
+        val key = listOf(
+            screenName,
+            gunId.toString(),
+            displayId?.toString() ?: "null",
+            ammoCountStyle.name,
+            useInventoryAmmo.toString(),
+            useDummyAmmo.toString(),
+            currentAmmo.toString(),
+            maxAmmo.toString(),
+            reserveAmmo.toString(),
+            currentAmmoText,
+            reserveText,
+        ).joinToString("|")
+        if (lastFocusedSmokeHudKey == key) {
+            return
+        }
+        lastFocusedSmokeHudKey = key
+        com.tacz.legacy.TACZLegacy.logger.info(
+            "[FocusedSmoke] HUD_AMMO screen={} gun={} display={} style={} useInventoryAmmo={} useDummyAmmo={} current={} max={} reserve={} currentText={} reserveText={}",
+            screenName,
+            gunId,
+            displayId ?: "null",
+            ammoCountStyle.name.lowercase(Locale.ROOT),
+            useInventoryAmmo,
+            useDummyAmmo,
+            currentAmmo,
+            maxAmmo,
+            reserveAmmo,
+            currentAmmoText,
+            reserveText,
+        )
+    }
+
+    private fun shouldRenderPersistentGunHud(mc: Minecraft): Boolean {
+        if (!LegacyConfigManager.client.gunHudEnable || mc.gameSettings.hideGUI) {
+            return false
+        }
+        return mc.player != null && mc.world != null
+    }
+
     private fun renderHeatBar(mc: Minecraft, width: Int, height: Int, rawPercent: Float, locked: Boolean): Unit {
         val percent = rawPercent.coerceIn(0f, 1f)
         val scaleTarget = percent / 8f + 0.75f
@@ -280,6 +379,30 @@ internal object LegacyClientOverlayEventHandler {
         }
         mc.fontRenderer.drawStringWithShadow(percentText, (scaledWidth / 2f - mc.fontRenderer.getStringWidth(percentText) / 2f), (scaledHeight / 2f + 38f), textColor)
         GlStateManager.popMatrix()
+    }
+
+    private fun renderKillAmountOverlay(event: RenderGameOverlayEvent.Post) {
+        if (!LegacyConfigManager.client.killAmountEnable) {
+            return
+        }
+        val mc = Minecraft.getMinecraft()
+        val player = mc.player ?: return
+        if (player.isSpectator || !IGun.mainHandHoldGun(player)) {
+            return
+        }
+        val timeoutMs = (LegacyConfigManager.client.killAmountDurationSecond * 1000.0).toLong().coerceAtLeast(0L)
+        val snapshot = LegacyHitFeedbackState.currentKillAmountSnapshot(System.currentTimeMillis(), timeoutMs) ?: return
+        val width = event.resolution.scaledWidth
+        val height = event.resolution.scaledHeight
+        val fontWidth = mc.fontRenderer.getStringWidth(snapshot.text)
+
+        GlStateManager.enableBlend()
+        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
+        GlStateManager.pushMatrix()
+        GlStateManager.scale(0.5f, 0.5f, 1f)
+        mc.fontRenderer.drawStringWithShadow(snapshot.text, width.toFloat() - fontWidth / 2f, (height - 45) * 2f - 1f, snapshot.color)
+        GlStateManager.popMatrix()
+        GlStateManager.disableBlend()
     }
 
     private fun renderInteractPrompt(event: RenderGameOverlayEvent.Post): Unit {

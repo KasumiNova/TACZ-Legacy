@@ -18,6 +18,7 @@ import com.tacz.legacy.client.resource.pojo.display.gun.AmmoCountStyle;
 import com.tacz.legacy.client.resource.pojo.display.gun.GunDisplay;
 import com.tacz.legacy.client.resource.pojo.display.gun.GunTransform;
 import com.tacz.legacy.client.resource.pojo.model.BedrockVersion;
+import com.tacz.legacy.sound.SoundManager;
 import net.minecraft.util.ResourceLocation;
 import org.luaj.vm2.LuaTable;
 import org.luaj.vm2.lib.jse.CoerceJavaToLua;
@@ -160,6 +161,9 @@ public class GunDisplayInstance {
     private void checkSounds(GunDisplay display) {
         Map<String, ResourceLocation> soundMaps = display.getSounds();
         if (soundMaps != null && !soundMaps.isEmpty()) {
+            soundMaps.putIfAbsent(SoundManager.HEAD_HIT_SOUND, new ResourceLocation(TACZLegacy.MOD_ID, SoundManager.HEAD_HIT_SOUND));
+            soundMaps.putIfAbsent(SoundManager.FLESH_HIT_SOUND, new ResourceLocation(TACZLegacy.MOD_ID, SoundManager.FLESH_HIT_SOUND));
+            soundMaps.putIfAbsent(SoundManager.KILL_SOUND, new ResourceLocation(TACZLegacy.MOD_ID, SoundManager.KILL_SOUND));
             sounds.putAll(soundMaps);
         }
     }

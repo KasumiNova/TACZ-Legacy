@@ -11,6 +11,7 @@ import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.attachment.AttachmentType
 import com.tacz.legacy.api.item.gun.FireMode
 import com.tacz.legacy.common.entity.EntityKineticBullet
+import net.minecraft.entity.monster.EntityPigZombie
 import com.tacz.legacy.common.item.LegacyItems
 import com.tacz.legacy.common.resource.BoltType
 import com.tacz.legacy.common.resource.GunCombatData
@@ -263,6 +264,7 @@ internal object FocusedSmokeRuntime {
     private const val BULLET_SPEED_MULTIPLIER_PROPERTY: String = "tacz.focusedSmoke.bulletSpeedMultiplier"
     private const val TRACER_SIZE_MULTIPLIER_PROPERTY: String = "tacz.focusedSmoke.tracerSizeMultiplier"
     private const val TRACER_LENGTH_MULTIPLIER_PROPERTY: String = "tacz.focusedSmoke.tracerLengthMultiplier"
+    private const val HIT_FEEDBACK_TARGET_PROPERTY: String = "tacz.focusedSmoke.hitFeedbackTarget"
 
     private val loggedKeys = ConcurrentHashMap.newKeySet<String>()
 
@@ -369,6 +371,9 @@ internal object FocusedSmokeRuntime {
 
     internal val regularShotYawOverride: Float?
         get() = System.getProperty(REGULAR_SHOT_YAW_PROPERTY)?.toFloatOrNull()
+
+    internal val hitFeedbackTargetEnabled: Boolean
+        get() = System.getProperty(HIT_FEEDBACK_TARGET_PROPERTY, "false").toBoolean()
 
     internal val bulletSpeedMultiplier: Float
         get() = parsePositiveFloatProperty(BULLET_SPEED_MULTIPLIER_PROPERTY)
@@ -628,6 +633,9 @@ internal object FocusedSmokeRuntime {
 
         player.inventory.markDirty()
         player.inventoryContainer.detectAndSendChanges()
+        if (hitFeedbackTargetEnabled) {
+            spawnHitFeedbackTarget(player, plan.regularGunId)
+        }
         applyWorldVisualOverrides(player.server)
         logCaptureOverrides()
         serverGearReady = true
@@ -696,6 +704,31 @@ internal object FocusedSmokeRuntime {
             iGun.setBulletInBarrel(stack, true)
         }
         return stack
+    }
+
+    private fun spawnHitFeedbackTarget(player: EntityPlayerMP, regularGunId: ResourceLocation) {
+        val world = player.serverWorld
+        val look = player.lookVec.normalize()
+        val spawnDistance = 8.0
+        val target = EntityPigZombie(world).apply {
+            setNoAI(true)
+            setPosition(
+                player.posX + look.x * spawnDistance,
+                player.posY,
+                player.posZ + look.z * spawnDistance,
+            )
+            rotationYaw = player.rotationYaw + 180.0f
+            renderYawOffset = rotationYaw
+            val baseDamage = GunDataAccessor.getGunData(regularGunId)?.bulletData?.damage ?: 4.0f
+            // Set health low so a single bullet kills the target (avoids hurtResistantTime blocking follow-up damage)
+            val desiredHealth = (baseDamage * 0.5f).coerceIn(1.0f, maxHealth - 0.5f)
+            health = desiredHealth
+        }
+        world.spawnEntity(target)
+        logOnce(
+            "hit-feedback-target",
+            "HIT_FEEDBACK_TARGET_READY entityId=${target.entityId} type=${target.javaClass.simpleName} gun=$regularGunId health=${"%.2f".format(target.health)} pos=${"%.2f".format(target.posX)},${"%.2f".format(target.posY)},${"%.2f".format(target.posZ)}",
+        )
     }
 
     private fun parseFireMode(rawValue: String): FireMode =

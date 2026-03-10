@@ -46,6 +46,8 @@ public object TACZNetworkHandler {
         registerS2C(ServerMessageGunFire.Handler::class.java, ServerMessageGunFire::class.java)
         registerS2C(ServerMessageGunDraw.Handler::class.java, ServerMessageGunDraw::class.java)
         registerS2C(ServerMessageGunFireSelect.Handler::class.java, ServerMessageGunFireSelect::class.java)
+        registerS2C(ServerMessageGunHurt.Handler::class.java, ServerMessageGunHurt::class.java)
+        registerS2C(ServerMessageGunKill.Handler::class.java, ServerMessageGunKill::class.java)
         registerS2C(ServerMessageRefreshRefitScreen.Handler::class.java, ServerMessageRefreshRefitScreen::class.java)
         registerS2C(ServerMessageSyncBaseTimestamp.Handler::class.java, ServerMessageSyncBaseTimestamp::class.java)
     }
@@ -71,6 +73,14 @@ public object TACZNetworkHandler {
             128.0,
         )
         CHANNEL.sendToAllAround(msg, point)
+    }
+
+    /**
+     * 发送消息到指定维度内的所有客户端。
+     */
+    @JvmStatic
+    public fun sendToDimension(msg: IMessage, dimension: Int) {
+        CHANNEL.sendToDimension(msg, dimension)
     }
 
     /**
