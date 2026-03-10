@@ -119,7 +119,7 @@ minecraft {
         args += "-Dmixin.debug.export=true"
     }
     val forwardedRuntimeProperties = System.getProperties().stringPropertyNames()
-        .filter { it.startsWith("tacz.focusedSmoke") || it.startsWith("tacz.audio") || it.startsWith("tacz.tracerDebug") }
+        .filter { it.startsWith("tacz.focusedSmoke") || it.startsWith("tacz.audio") }
         .sorted()
         .mapNotNull { key ->
             System.getProperty(key)?.let { value -> "-D${key}=${value}" }
@@ -238,7 +238,7 @@ tasks.withType<Jar> {
             attributeMap["FMLCorePlugin"] = coremod_plugin_class_name
             if (include_mod.toBoolean()) {
                 attributeMap["FMLCorePluginContainsFMLMod"] = true.toString()
-                attributeMap["ForceLoadAsMod"] = (project.gradle.startParameter.taskNames[0] == "build").toString()
+//                attributeMap["ForceLoadAsMod"] = (project.gradle.startParameter.taskNames[0] == "build").toString()
             }
         }
         if (use_access_transformer.toBoolean()) {

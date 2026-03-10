@@ -133,7 +133,7 @@ internal class TACZGunScriptAPI {
             }
 
             val processedSpeed = bulletData.getProcessedSpeed()
-            val bulletAmount = bulletData.bulletAmount.coerceAtLeast(1)
+            val bulletAmount = TACZBulletSpreadResolver.resolveBulletAmount(itemStack, gun, data)
             val pitchVal = pitchSupplier?.get() ?: shooter.rotationPitch
             val yawVal = yawSupplier?.get() ?: shooter.rotationYaw
 
@@ -143,7 +143,19 @@ internal class TACZGunScriptAPI {
                     shooter.world, shooter, bulletData, gunId, gunDisplayId, ammoId, isTracer,
                 )
                 bullet.applyShotgunDamageSpread(bulletAmount)
-                bullet.shootFromRotation(shooter, pitchVal, yawVal, processedSpeed, 1.0f)
+                TACZBulletSpreadResolver.applySpread(
+                    shooter = shooter,
+                    dataHolder = dataHolder,
+                    gunItem = itemStack,
+                    iGun = gun,
+                    gunData = data,
+                    bullet = bullet,
+                    bulletIndex = i,
+                    processedSpeed = processedSpeed,
+                    pitch = pitchVal,
+                    yaw = yawVal,
+                    scriptApi = this,
+                )
                 shooter.world.spawnEntity(bullet)
             }
         }
@@ -378,10 +390,10 @@ internal class TACZGunScriptAPI {
 
     fun hasHeatData(): Boolean = gunData?.hasHeatData == true
 
-    fun getHeatMinRpm(): Float = 0f
-    fun getHeatMaxRpm(): Float = 0f
-    fun getHeatMinInaccuracy(): Float = 0f
-    fun getHeatMaxInaccuracy(): Float = 0f
+    fun getHeatMinRpm(): Float = if (gunData?.hasHeatData == true) gunData!!.heatMinRpmModifier else 0f
+    fun getHeatMaxRpm(): Float = if (gunData?.hasHeatData == true) gunData!!.heatMaxRpmModifier else 0f
+    fun getHeatMinInaccuracy(): Float = if (gunData?.hasHeatData == true) gunData!!.heatMinInaccuracy else 0f
+    fun getHeatMaxInaccuracy(): Float = if (gunData?.hasHeatData == true) gunData!!.heatMaxInaccuracy else 0f
 
     fun getHeatMax(): Float = if (gunData?.hasHeatData == true) gunData!!.heatMax else 0f
     fun getHeatPerShot(): Float = if (gunData?.hasHeatData == true) gunData!!.heatPerShot else 0f

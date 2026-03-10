@@ -1,6 +1,7 @@
 package com.tacz.legacy.common.item
 
 import com.google.gson.JsonObject
+import com.tacz.legacy.api.DefaultAssets
 import com.tacz.legacy.api.item.IAmmo
 import com.tacz.legacy.api.item.IAmmoBox
 import com.tacz.legacy.api.item.IGun
@@ -129,6 +130,22 @@ internal object LegacyRuntimeTooltipSupport {
         }
         val current = (stack.tagCompound?.getFloat(GUN_HEAT_AMOUNT_TAG) ?: 0f).coerceAtLeast(0f)
         return HeatInfo(current = current, max = max, locked = iGun.isOverheatLocked(stack))
+    }
+
+    internal fun resolveGunDisplayId(stack: ItemStack, iGun: IGun? = stack.item as? IGun): ResourceLocation? {
+        val gun = iGun ?: return null
+        val snapshot = TACZGunPackRuntimeRegistry.getSnapshot()
+        val fallbackDisplayId = TACZGunPackPresentation.resolveGunDisplayId(snapshot, gun.getGunId(stack))
+        val rawDisplayId = stack.tagCompound
+            ?.getString(GUN_DISPLAY_ID_TAG)
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::safeResourceLocation)
+
+        return when {
+            rawDisplayId == null || rawDisplayId == DefaultAssets.DEFAULT_GUN_DISPLAY_ID -> fallbackDisplayId
+            snapshot.gunDisplays.containsKey(rawDisplayId) -> rawDisplayId
+            else -> fallbackDisplayId
+        }
     }
 
     internal fun isContinuousBurst(gunId: ResourceLocation): Boolean {

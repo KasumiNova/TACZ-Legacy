@@ -42,6 +42,9 @@ public class ServerMessageGunFire() : IMessage {
                 val world = mc.world ?: return@addScheduledTask
                 val entity = world.getEntityByID(message.entityId)
                 if (entity is EntityLivingBase) {
+                    if (entity == mc.player) {
+                        return@addScheduledTask
+                    }
                     MinecraftForge.EVENT_BUS.post(GunFireEvent(entity, message.gunItemStack, Side.CLIENT))
                 }
             }

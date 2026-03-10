@@ -77,6 +77,11 @@ public class GunCombatData private constructor(
     public val heatCoolingMultiplier: Float,
     public val heatCoolingDelayMs: Long,
     public val heatOverHeatTimeMs: Long,
+    public val heatMinInaccuracy: Float,
+    public val heatMaxInaccuracy: Float,
+    public val heatMinRpmModifier: Float,
+    public val heatMaxRpmModifier: Float,
+    public val crawlRecoilMultiplier: Float,
     public val isReloadInfinite: Boolean,
     public val reloadType: String,
     public val scriptId: ResourceLocation?,
@@ -149,6 +154,7 @@ public class GunCombatData private constructor(
             val burstContinuousShoot = burstObj?.getAsJsonPrimitive("continuous_shoot")?.asBoolean ?: false
 
             val fireModes = raw.getAsJsonArray("fire_mode")?.map { it.asString } ?: listOf("semi")
+            val crawlRecoilMultiplier = raw.getAsJsonPrimitive("crawl_recoil_multiplier")?.asFloat ?: 0.5f
 
             val heatObj = raw.safeGetObject("heat")
             val hasHeat = heatObj != null
@@ -157,6 +163,10 @@ public class GunCombatData private constructor(
             val heatCoolingMultiplier = heatObj?.getAsJsonPrimitive("cooling_multiplier")?.asFloat ?: 1.0f
             val heatCoolingDelayMs = heatObj?.getAsJsonPrimitive("cooling_delay")?.asLong ?: 1000L
             val heatOverHeatTimeMs = heatObj?.getAsJsonPrimitive("over_heat_time")?.asLong ?: 3000L
+            val heatMinInaccuracy = heatObj?.getAsJsonPrimitive("min_inaccuracy")?.asFloat ?: 1.0f
+            val heatMaxInaccuracy = heatObj?.getAsJsonPrimitive("max_inaccuracy")?.asFloat ?: 1.0f
+            val heatMinRpmModifier = heatObj?.getAsJsonPrimitive("min_rpm_mod")?.asFloat ?: 1.0f
+            val heatMaxRpmModifier = heatObj?.getAsJsonPrimitive("max_rpm_mod")?.asFloat ?: 1.0f
 
             val scriptId = raw.getAsJsonPrimitive("script")?.asString?.takeIf { it.isNotBlank() }?.let(::ResourceLocation)
 
@@ -274,6 +284,11 @@ public class GunCombatData private constructor(
                 heatCoolingMultiplier = heatCoolingMultiplier,
                 heatCoolingDelayMs = heatCoolingDelayMs,
                 heatOverHeatTimeMs = heatOverHeatTimeMs,
+                heatMinInaccuracy = heatMinInaccuracy,
+                heatMaxInaccuracy = heatMaxInaccuracy,
+                heatMinRpmModifier = heatMinRpmModifier,
+                heatMaxRpmModifier = heatMaxRpmModifier,
+                crawlRecoilMultiplier = crawlRecoilMultiplier,
                 isReloadInfinite = isInfinite,
                 reloadType = reloadType,
                 scriptId = scriptId,

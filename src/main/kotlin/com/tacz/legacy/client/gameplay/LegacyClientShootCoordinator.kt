@@ -2,11 +2,13 @@ package com.tacz.legacy.client.gameplay
 
 import com.tacz.legacy.api.entity.IGunOperator
 import com.tacz.legacy.api.entity.ShootResult
+import com.tacz.legacy.api.event.GunFireEvent
 import com.tacz.legacy.api.event.GunShootEvent
 import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.gun.FireMode
 import com.tacz.legacy.client.animation.statemachine.GunAnimationConstant
 import com.tacz.legacy.client.event.FirstPersonRenderGunEvent
+import com.tacz.legacy.client.event.TACZCameraRecoilHandler
 import com.tacz.legacy.client.resource.GunDisplayInstance
 import com.tacz.legacy.client.sound.TACZClientGunSoundCoordinator
 import com.tacz.legacy.common.network.TACZNetworkHandler
@@ -121,17 +123,22 @@ internal object LegacyClientShootCoordinator {
         clientShootTimestampMs = now
 
         TACZNetworkHandler.sendToServer(ClientMessagePlayerShoot(pitch, yaw, relativeTimestamp))
-        if (triggerAnimation) {
-            LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_SHOOT)
+        val fireEvent = GunFireEvent(player, stack, Side.CLIENT)
+        val fireAccepted = !MinecraftForge.EVENT_BUS.post(fireEvent)
+        if (fireAccepted) {
+            if (triggerAnimation) {
+                LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_SHOOT)
+            }
+            TACZClientGunSoundCoordinator.stopPlayGunSound(display, SoundManager.INSPECT_SOUND)
+            if (TACZGunSoundRouting.resolveNearbyFireSoundProfile(stack).useSilenceSound) {
+                TACZClientGunSoundCoordinator.playSilenceSound(player, display, gunData)
+            } else {
+                TACZClientGunSoundCoordinator.playShootSound(player, display, gunData)
+            }
+            // Record shoot timestamp for procedural recoil/sway animation
+            FirstPersonRenderGunEvent.onShoot()
+            TACZCameraRecoilHandler.onLocalGunFire(player, stack)
         }
-        TACZClientGunSoundCoordinator.stopPlayGunSound(display, SoundManager.INSPECT_SOUND)
-        if (TACZGunSoundRouting.resolveNearbyFireSoundProfile(stack).useSilenceSound) {
-            TACZClientGunSoundCoordinator.playSilenceSound(player, display, gunData)
-        } else {
-            TACZClientGunSoundCoordinator.playShootSound(player, display, gunData)
-        }
-        // Record shoot timestamp for procedural recoil/sway animation
-        FirstPersonRenderGunEvent.onShoot()
 
         // 点射模式：调度后续动画/音效
         val fireMode = iGun.getFireMode(stack)
@@ -173,14 +180,18 @@ internal object LegacyClientShootCoordinator {
                     return@scheduleAtFixedRate
                 }
                 Minecraft.getMinecraft().addScheduledTask {
-                    LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_SHOOT)
-                    TACZClientGunSoundCoordinator.stopPlayGunSound(display, SoundManager.INSPECT_SOUND)
-                    if (useSilence) {
-                        TACZClientGunSoundCoordinator.playSilenceSound(player, display, gunData)
-                    } else {
-                        TACZClientGunSoundCoordinator.playShootSound(player, display, gunData)
+                    val fireEvent = GunFireEvent(player, stack, Side.CLIENT)
+                    if (!MinecraftForge.EVENT_BUS.post(fireEvent)) {
+                        LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_SHOOT)
+                        TACZClientGunSoundCoordinator.stopPlayGunSound(display, SoundManager.INSPECT_SOUND)
+                        if (useSilence) {
+                            TACZClientGunSoundCoordinator.playSilenceSound(player, display, gunData)
+                        } else {
+                            TACZClientGunSoundCoordinator.playShootSound(player, display, gunData)
+                        }
+                        FirstPersonRenderGunEvent.onShoot()
+                        TACZCameraRecoilHandler.onLocalGunFire(player, stack)
                     }
-                    FirstPersonRenderGunEvent.onShoot()
                 }
                 counter.incrementAndGet()
             } catch (_: Exception) {

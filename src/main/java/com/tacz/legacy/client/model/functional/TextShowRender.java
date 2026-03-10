@@ -1,5 +1,6 @@
 package com.tacz.legacy.client.model.functional;
 
+import com.tacz.legacy.client.foundation.TACZAsciiFontHelper;
 import com.tacz.legacy.client.model.IFunctionalRenderer;
 import com.tacz.legacy.client.model.bedrock.BedrockModel;
 import com.tacz.legacy.client.model.papi.PapiManager;
@@ -55,7 +56,7 @@ public class TextShowRender implements IFunctionalRenderer {
             float scale = textShow.getScale();
             int textLight = textShow.getTextLight();
 
-            int width = font.getStringWidth(text);
+            int width = TACZAsciiFontHelper.getStringWidth(font, text);
             int xOffset;
             Align align = textShow.getAlign();
             if (align == Align.CENTER) {
@@ -94,7 +95,7 @@ public class TextShowRender implements IFunctionalRenderer {
             );
             GlStateManager.depthMask(true);
 
-            font.drawString(text, -xOffset, -font.FONT_HEIGHT / 2, color, shadow);
+            TACZAsciiFontHelper.drawString(font, text, -xOffset, -font.FONT_HEIGHT / 2, color, shadow);
 
             GlStateManager.enableLighting();
             OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, prevBX, prevBY);

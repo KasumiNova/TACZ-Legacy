@@ -1,6 +1,7 @@
 package com.tacz.legacy.client.gui
 
 import com.tacz.legacy.TACZLegacy
+import com.tacz.legacy.client.foundation.TACZAsciiFontHelper
 import com.tacz.legacy.common.application.refit.LegacyGunRefitRuntime
 import com.tacz.legacy.common.application.gunsmith.LegacyGunSmithIngredient
 import com.tacz.legacy.common.application.gunsmith.LegacyGunSmithRecipe
@@ -17,6 +18,7 @@ import net.minecraft.client.gui.inventory.GuiContainer
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.RenderHelper
 import net.minecraft.client.resources.I18n
+import net.minecraft.client.util.ITooltipFlag
 import net.minecraft.entity.player.InventoryPlayer
 import net.minecraft.item.ItemStack
 import net.minecraft.util.ResourceLocation
@@ -234,9 +236,9 @@ internal class GunSmithTableScreen(
     override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
         drawDefaultBackground()
         super.drawScreen(mouseX, mouseY, partialTicks)
-        searchField.drawTextBox()
+        TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, searchField.text, Runnable { searchField.drawTextBox() })
         if (searchField.text.isEmpty() && !searchField.isFocused) {
-            fontRenderer.drawString(I18n.format("gui.tacz.gun_smith_table.filter.search"), guiLeft + 10, guiTop + 23, 0x7F7F7F)
+            TACZAsciiFontHelper.drawString(fontRenderer, I18n.format("gui.tacz.gun_smith_table.filter.search"), guiLeft + 10, guiTop + 23, 0x7F7F7F)
         }
         renderHoveredTooltips(mouseX, mouseY)
     }
@@ -258,19 +260,20 @@ internal class GunSmithTableScreen(
     }
 
     override fun drawGuiContainerForegroundLayer(mouseX: Int, mouseY: Int) {
-        fontRenderer.drawString(I18n.format("gui.tacz.gun_smith_table.preview"), 54, 6, TITLE_COLOR)
+        TACZAsciiFontHelper.drawString(fontRenderer, I18n.format("gui.tacz.gun_smith_table.preview"), 54, 6, TITLE_COLOR)
         selectedType?.let { typeId ->
             visibleTabs.firstOrNull { it.id == typeId }?.let { tab ->
-                fontRenderer.drawString(tab.displayName, 150, 32, TITLE_COLOR)
+                TACZAsciiFontHelper.drawString(fontRenderer, tab.displayName, 150, 32, TITLE_COLOR)
             }
         }
-        fontRenderer.drawString(I18n.format("gui.tacz.gun_smith_table.ingredient"), 254, 50, TITLE_COLOR)
-        drawCenteredString(fontRenderer, I18n.format("gui.tacz.gun_smith_table.craft"), 312, 167, 0xFFFFFF)
+        TACZAsciiFontHelper.drawString(fontRenderer, I18n.format("gui.tacz.gun_smith_table.ingredient"), 254, 50, TITLE_COLOR)
+        TACZAsciiFontHelper.drawCenteredStringWithShadow(fontRenderer, I18n.format("gui.tacz.gun_smith_table.craft"), 312, 167, 0xFFFFFF)
 
         if (selectedRecipe == null) {
-            fontRenderer.drawString(I18n.format("gui.tacz.gun_smith_table.no_matching_recipes"), 151, 67, 0xAA4444)
+            TACZAsciiFontHelper.drawString(fontRenderer, I18n.format("gui.tacz.gun_smith_table.no_matching_recipes"), 151, 67, 0xAA4444)
         } else if (!filterPanelVisible) {
-            fontRenderer.drawString(
+            TACZAsciiFontHelper.drawString(
+                fontRenderer,
                 I18n.format("gui.tacz.gun_smith_table.count", selectedRecipe!!.result.count),
                 254,
                 140,
@@ -490,7 +493,7 @@ internal class GunSmithTableScreen(
         GlStateManager.scale(scale, scale, 1f)
         RenderHelper.enableGUIStandardItemLighting()
         itemRender.renderItemAndEffectIntoGUI(recipe.result, -8, -8)
-        itemRender.renderItemOverlayIntoGUI(fontRenderer, recipe.result, -8, -8, null)
+        TACZAsciiFontHelper.renderItemOverlayIntoGUI(itemRender, fontRenderer, recipe.result, -8, -8, null)
         RenderHelper.disableStandardItemLighting()
         GlStateManager.popMatrix()
     }
@@ -525,22 +528,23 @@ internal class GunSmithTableScreen(
         val x = guiLeft + 6
         var y = guiTop + 120
         if (packInfo == null) {
-            fontRenderer.drawString(I18n.format("gui.tacz.gun_smith_table.error"), x, y, 0xAF0000)
+            TACZAsciiFontHelper.drawString(fontRenderer, I18n.format("gui.tacz.gun_smith_table.error"), x, y, 0xAF0000)
             return
         }
-        fontRenderer.drawString(namespaceDisplayName(recipe.sourceNamespace), x, y, 0x555555)
+        TACZAsciiFontHelper.drawString(fontRenderer, namespaceDisplayName(recipe.sourceNamespace), x, y, 0x555555)
         y += 10
-        fontRenderer.drawString("v${packInfo.version}", x, y, 0x555555)
+        TACZAsciiFontHelper.drawString(fontRenderer, "v${packInfo.version}", x, y, 0x555555)
         y += 10
         val description = com.tacz.legacy.common.resource.TACZGunPackPresentation.localizedText(snapshot, packInfo.description)
             ?: packInfo.description
         if (description.isNotBlank()) {
-            fontRenderer.listFormattedStringToWidth(description, 122).take(3).forEach { line ->
-                fontRenderer.drawString(line, x, y, 0x555555)
+            TACZAsciiFontHelper.listFormattedStringToWidth(fontRenderer, description, 122).take(3).forEach { line ->
+                TACZAsciiFontHelper.drawString(fontRenderer, line, x, y, 0x555555)
                 y += 10
             }
         }
-        fontRenderer.drawString(
+        TACZAsciiFontHelper.drawString(
+            fontRenderer,
             I18n.format("gui.tacz.gun_smith_table.license") + packInfo.license,
             x,
             y,
@@ -548,7 +552,8 @@ internal class GunSmithTableScreen(
         )
         y += 10
         if (packInfo.authors.isNotEmpty()) {
-            fontRenderer.drawString(
+            TACZAsciiFontHelper.drawString(
+                fontRenderer,
                 I18n.format("gui.tacz.gun_smith_table.authors") + packInfo.authors.joinToString(", "),
                 x,
                 y,
@@ -556,7 +561,8 @@ internal class GunSmithTableScreen(
             )
             y += 10
         }
-        fontRenderer.drawString(
+        TACZAsciiFontHelper.drawString(
+            fontRenderer,
             I18n.format("gui.tacz.gun_smith_table.date") + packInfo.date,
             x,
             y,
@@ -587,25 +593,27 @@ internal class GunSmithTableScreen(
             GlStateManager.translate(0f, 0f, 200f)
             GlStateManager.scale(0.5f, 0.5f, 1f)
             val label = if (mc.player?.capabilities?.isCreativeMode == true) "$need/∞" else "$need/$has"
-            fontRenderer.drawString(label, (x + 17) * 2, (y + 10) * 2, color)
+            TACZAsciiFontHelper.drawString(fontRenderer, label, (x + 17) * 2, (y + 10) * 2, color)
             GlStateManager.popMatrix()
         }
     }
 
     private fun renderHoveredTooltips(mouseX: Int, mouseY: Int) {
         tabButtons.firstOrNull { it.isMouseOver(mouseX, mouseY) }?.let { button ->
-            drawHoveringText(listOf(button.tab.displayName), mouseX, mouseY)
+            TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, listOf(button.tab.displayName), Runnable { drawHoveringText(listOf(button.tab.displayName), mouseX, mouseY) })
             return
         }
         buttonList.asSequence()
             .filterIsInstance<HoverTooltipButton>()
             .firstOrNull { it.isMouseOver(mouseX, mouseY) && it.tooltipLines.isNotEmpty() }
             ?.let { button ->
-                drawHoveringText(button.tooltipLines, mouseX, mouseY)
+                TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, button.tooltipLines, Runnable { drawHoveringText(button.tooltipLines, mouseX, mouseY) })
                 return
             }
         resultButtons.firstOrNull { it.isMouseOver(mouseX, mouseY) }?.let { button ->
-            renderToolTip(button.recipe.result, mouseX, mouseY)
+            val tooltipFlag = if (mc.gameSettings.advancedItemTooltips) ITooltipFlag.TooltipFlags.ADVANCED else ITooltipFlag.TooltipFlags.NORMAL
+            val tooltipLines = button.recipe.result.getTooltip(mc.player, tooltipFlag)
+            TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, tooltipLines, Runnable { renderToolTip(button.recipe.result, mouseX, mouseY) })
             return
         }
         selectedRecipe?.materials?.take(MAX_INGREDIENTS)?.forEachIndexed { index, ingredient ->
@@ -616,9 +624,12 @@ internal class GunSmithTableScreen(
             if (mouseX in x until (x + 16) && mouseY in y until (y + 16)) {
                 val stacks = ingredient.ingredient.matchingStacks
                 if (stacks.isNotEmpty()) {
-                    renderToolTip(stacks.first(), mouseX, mouseY)
+                    val tooltipFlag = if (mc.gameSettings.advancedItemTooltips) ITooltipFlag.TooltipFlags.ADVANCED else ITooltipFlag.TooltipFlags.NORMAL
+                    val tooltipLines = stacks.first().getTooltip(mc.player, tooltipFlag)
+                    TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, tooltipLines, Runnable { renderToolTip(stacks.first(), mouseX, mouseY) })
                 } else {
-                    drawHoveringText(listOf(I18n.format("gui.tacz.gun_smith_table.missing_ingredient")), mouseX, mouseY)
+                    val lines = listOf(I18n.format("gui.tacz.gun_smith_table.missing_ingredient"))
+                    TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, lines, Runnable { drawHoveringText(lines, mouseX, mouseY) })
                 }
                 return
             }
@@ -698,7 +709,7 @@ internal class GunSmithTableScreen(
             drawVerticalLine(x, y, y + height - 1, border)
             drawVerticalLine(x + width - 1, y, y + height - 1, border)
             val textColor = if (enabled) 0xF3EFE0 else 0x777777
-            drawCenteredString(fontRenderer, displayString, x + width / 2, y + (height - 8) / 2, textColor)
+            TACZAsciiFontHelper.drawCenteredStringWithShadow(fontRenderer, displayString, x + width / 2, y + (height - 8) / 2, textColor)
         }
 
         override fun isMouseOver(mouseX: Int, mouseY: Int): Boolean = mouseX >= x && mouseY >= y && mouseX < x + width && mouseY < y + height
@@ -777,10 +788,10 @@ internal class GunSmithTableScreen(
             RenderHelper.enableGUIStandardItemLighting()
             itemRender.renderItemAndEffectIntoGUI(recipe.result, x + 1, y)
             RenderHelper.disableStandardItemLighting()
-            val name = fontRenderer.trimStringToWidth(recipe.result.displayName, 68)
-            fontRenderer.drawString(name, x + 20, y + 4, 0xFFFFFF)
+            val name = TACZAsciiFontHelper.trimStringToWidth(fontRenderer, recipe.result.displayName, 68)
+            TACZAsciiFontHelper.drawString(fontRenderer, name, x + 20, y + 4, 0xFFFFFF)
             if (recipe.result.count > 1) {
-                fontRenderer.drawString("x${recipe.result.count}", x + 76, y + 4, 0xDDDDDD)
+                TACZAsciiFontHelper.drawString(fontRenderer, "x${recipe.result.count}", x + 76, y + 4, 0xDDDDDD)
             }
         }
 

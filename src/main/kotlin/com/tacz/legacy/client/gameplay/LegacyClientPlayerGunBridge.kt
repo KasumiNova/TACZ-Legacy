@@ -23,6 +23,7 @@ import com.tacz.legacy.common.network.message.client.ClientMessagePlayerMelee
 import com.tacz.legacy.common.network.message.client.ClientMessagePlayerReload
 import com.tacz.legacy.common.network.message.client.ClientMessagePlayerShoot
 import com.tacz.legacy.common.resource.GunDataAccessor
+import com.tacz.legacy.common.resource.BoltType
 import com.tacz.legacy.common.item.LegacyRuntimeTooltipSupport
 import com.tacz.legacy.common.config.InteractKeyConfigRead
 import net.minecraft.client.Minecraft
@@ -77,6 +78,7 @@ internal object LegacyClientPlayerGunBridge {
         processInteractInput(mc, player)
         processShootInput(player, operator)
         processAutoReload(player, operator)
+        tickClientAutoBolt(player, operator)
         operator.tick()
         LegacyClientGunAnimationDriver.tickLoopAnimation(player)
     }
@@ -269,6 +271,49 @@ internal object LegacyClientPlayerGunBridge {
                 }
                 else -> Unit
             }
+        }
+    }
+
+    /**
+     * 客户端自动拉拴 tick。与上游 LocalPlayerBolt.tickAutoBolt() 行为一致：
+     * 每 tick 检查是否需要拉拴，自动触发拉拴操作，并在膛内弹药同步到位后结束拉拴状态。
+     */
+    private fun tickClientAutoBolt(player: EntityPlayerSP, operator: IGunOperator) {
+        val data = operator.getDataHolder()
+        val stack = player.heldItemMainhand
+        val iGun = stack.item as? IGun ?: run {
+            data.isBolting = false
+            return
+        }
+
+        // 尝试触发拉拴（与上游 bolt() 条件对齐）
+        if (!data.isBolting) {
+            val gunId = iGun.getGunId(stack)
+            val gunData = GunDataAccessor.getGunData(gunId) ?: return
+            if (gunData.boltType != BoltType.MANUAL_ACTION) return
+            val hasAmmoInBarrel = iGun.hasBulletInBarrel(stack)
+            if (hasAmmoInBarrel) return
+            val useInventoryAmmo = iGun.useInventoryAmmo(stack)
+            val hasInventoryAmmo = iGun.hasInventoryAmmo(player, stack, operator.needCheckAmmo())
+            val noAmmo = (useInventoryAmmo && !hasInventoryAmmo) ||
+                (!useInventoryAmmo && iGun.getCurrentAmmoCount(stack) < 1)
+            if (noAmmo) return
+            if (operator.getSynReloadState().stateType.isReloading()) return
+            if (operator.getSynDrawCoolDown() != 0L) return
+
+            // 触发拉拴
+            operator.bolt()
+            if (data.isBolting) {
+                TACZNetworkHandler.sendToServer(ClientMessagePlayerBolt())
+                LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_BOLT)
+                val display = LegacyClientGunAnimationDriver.resolveDisplayInstance(stack)
+                TACZClientGunSoundCoordinator.playBoltSound(player, display)
+            }
+        }
+
+        // 对于客户端来说，膛内弹药被填入的状态同步到客户端的瞬间，bolt 过程才算完全结束
+        if (data.isBolting && iGun.hasBulletInBarrel(stack)) {
+            data.isBolting = false
         }
     }
 

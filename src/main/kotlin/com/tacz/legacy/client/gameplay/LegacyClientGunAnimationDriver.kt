@@ -7,9 +7,8 @@ import com.tacz.legacy.client.animation.statemachine.GunAnimationConstant
 import com.tacz.legacy.client.animation.statemachine.GunAnimationStateContext
 import com.tacz.legacy.client.resource.GunDisplayInstance
 import com.tacz.legacy.client.resource.TACZClientAssetManager
+import com.tacz.legacy.common.item.LegacyRuntimeTooltipSupport
 import com.tacz.legacy.common.resource.GunDataAccessor
-import com.tacz.legacy.common.resource.TACZGunPackPresentation
-import com.tacz.legacy.common.resource.TACZGunPackRuntimeRegistry
 import net.minecraft.client.entity.EntityPlayerSP
 import net.minecraft.item.ItemStack
 import kotlin.math.abs
@@ -21,8 +20,7 @@ internal object LegacyClientGunAnimationDriver {
 
     internal fun resolveDisplayInstance(stack: ItemStack): GunDisplayInstance? {
         val iGun = stack.item as? IGun ?: return null
-        val snapshot = TACZGunPackRuntimeRegistry.getSnapshot()
-        val displayId = TACZGunPackPresentation.resolveGunDisplayId(snapshot, iGun.getGunId(stack)) ?: return null
+        val displayId = LegacyRuntimeTooltipSupport.resolveGunDisplayId(stack, iGun) ?: return null
         return TACZClientAssetManager.getGunDisplayInstance(displayId)
     }
 

@@ -11,6 +11,7 @@ import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.attachment.AttachmentType
 import com.tacz.legacy.api.item.gun.FireMode
 import com.tacz.legacy.api.modifier.Modifier
+import com.tacz.legacy.client.foundation.TACZAsciiFontHelper
 import com.tacz.legacy.client.animation.screen.RefitTransform
 import com.tacz.legacy.client.input.LegacyKeyBindings
 import com.tacz.legacy.common.application.refit.LegacyGunRefitRuntime
@@ -225,7 +226,7 @@ internal class GunRefitScreen : GuiScreen() {
 		val gunStack = currentGunStack()
 
 		if (gunStack.isEmpty) {
-			drawCenteredString(fontRenderer, I18n.format("gui.tacz.gun_smith_table.refit.unavailable"), width / 2, 60, 0xFF6666)
+			TACZAsciiFontHelper.drawCenteredStringWithShadow(fontRenderer, I18n.format("gui.tacz.gun_smith_table.refit.unavailable"), width / 2, 60, 0xFF6666)
 			super.drawScreen(mouseX, mouseY, partialTicks)
 			return
 		}
@@ -534,8 +535,8 @@ internal class GunRefitScreen : GuiScreen() {
 			else -> currentAttachment.displayName
 		}
 		val slotLabel = if (selectedType == AttachmentType.NONE) I18n.format("tooltip.tacz.attachment.none") else attachmentTypeLabel(selectedType)
-		drawString(fontRenderer, fireModeText, 24, 50, 0xEAEAEA)
-		drawString(fontRenderer, "$slotLabel: $currentAttachmentName", 24, 62, 0xD7E6FF)
+		TACZAsciiFontHelper.drawStringWithShadow(fontRenderer, fireModeText, 24f, 50f, 0xEAEAEA)
+		TACZAsciiFontHelper.drawStringWithShadow(fontRenderer, "$slotLabel: $currentAttachmentName", 24f, 62f, 0xD7E6FF)
 	}
 
 	private fun drawAttachmentPanelBackdrop() {
@@ -547,9 +548,9 @@ internal class GunRefitScreen : GuiScreen() {
 
 		val header = if (selectedType == AttachmentType.NONE) I18n.format("key.tacz.refit.desc") else attachmentTypeLabel(selectedType)
 		val pageText = if (selectedType == AttachmentType.NONE) "" else "${currentPage + 1}/${inventoryMaxPage() + 1}"
-		drawString(fontRenderer, header, left + 8, top + 8, 0xE9E9E9)
+		TACZAsciiFontHelper.drawStringWithShadow(fontRenderer, header, (left + 8).toFloat(), (top + 8).toFloat(), 0xE9E9E9)
 		if (pageText.isNotBlank()) {
-			drawString(fontRenderer, pageText, right - 64, top + 8, 0xC7D3EA)
+			TACZAsciiFontHelper.drawStringWithShadow(fontRenderer, pageText, (right - 64).toFloat(), (top + 8).toFloat(), 0xC7D3EA)
 		}
 
 		if (selectedType != AttachmentType.NONE) {
@@ -557,15 +558,21 @@ internal class GunRefitScreen : GuiScreen() {
 			if (!attachment.isEmpty) {
 				RenderHelper.enableGUIStandardItemLighting()
 				itemRender.renderItemAndEffectIntoGUI(attachment, left + 8, top + 24)
-				itemRender.renderItemOverlayIntoGUI(fontRenderer, attachment, left + 8, top + 24, null)
+				TACZAsciiFontHelper.renderItemOverlayIntoGUI(itemRender, fontRenderer, attachment, left + 8, top + 24, null)
 				RenderHelper.disableStandardItemLighting()
 			}
 			val currentAttachmentName = if (attachment.isEmpty) I18n.format("tooltip.tacz.attachment.none") else attachment.displayName
-			drawString(fontRenderer, fontRenderer.trimStringToWidth(currentAttachmentName, ATTACHMENT_PANEL_WIDTH - 36), left + 30, top + 29, 0xD7E6FF)
+			TACZAsciiFontHelper.drawStringWithShadow(
+				fontRenderer,
+				TACZAsciiFontHelper.trimStringToWidth(fontRenderer, currentAttachmentName, ATTACHMENT_PANEL_WIDTH - 36),
+				(left + 30).toFloat(),
+				(top + 29).toFloat(),
+				0xD7E6FF,
+			)
 		}
 
 		if (selectedType != AttachmentType.NONE && inventoryButtons.isEmpty()) {
-			drawCenteredString(fontRenderer, I18n.format("tooltip.tacz.attachment.none"), left + ATTACHMENT_PANEL_WIDTH / 2, top + 82, 0xFF8888)
+			TACZAsciiFontHelper.drawCenteredStringWithShadow(fontRenderer, I18n.format("tooltip.tacz.attachment.none"), left + ATTACHMENT_PANEL_WIDTH / 2, top + 82, 0xFF8888)
 		}
 	}
 
@@ -584,7 +591,7 @@ internal class GunRefitScreen : GuiScreen() {
 		val panelHeight = propertyDiagramHeight(rows.size)
 		drawRect(panelLeft, panelTop, panelLeft + panelWidth, panelTop + panelHeight, 0xAF222222.toInt())
 		val fireModeLine = I18n.format("gui.tacz.gun_refit.property_diagrams.fire_mode") + fireModeText(currentStats.fireMode)
-		drawString(fontRenderer, fireModeLine, nameTextX + 12, panelTop + 5, 0xCCCCCC)
+		TACZAsciiFontHelper.drawStringWithShadow(fontRenderer, fireModeLine, (nameTextX + 12).toFloat(), (panelTop + 5).toFloat(), 0xCCCCCC)
 		rows.forEachIndexed { index, row ->
 			drawStatRow(row, nameTextX, panelTop + 15 + index * 10, barX, barWidth, valueX)
 		}
@@ -620,7 +627,7 @@ internal class GunRefitScreen : GuiScreen() {
 	}
 
 	private fun drawStatRow(row: StatRow, x: Int, y: Int, barX: Int, barWidth: Int, valueX: Int) {
-		drawString(fontRenderer, row.label, x, y, 0xCCCCCC)
+		TACZAsciiFontHelper.drawStringWithShadow(fontRenderer, row.label, x.toFloat(), y.toFloat(), 0xCCCCCC)
 		val barY = y + 2
 		val baseRatio = normalizedRatio(row.base, row.maxValue, row.lowerIsBetter)
 		val currentRatio = normalizedRatio(row.current, row.maxValue, row.lowerIsBetter)
@@ -646,15 +653,15 @@ internal class GunRefitScreen : GuiScreen() {
 				"${formatNumber(row.current)}${row.unit} ${colorCode}(${sign}${formatNumber(delta)}${row.unit})"
 			}
 		}
-		drawString(fontRenderer, valueText, valueX, y, 0xCCCCCC)
+		TACZAsciiFontHelper.drawStringWithShadow(fontRenderer, valueText, valueX.toFloat(), y.toFloat(), 0xCCCCCC)
 	}
 
 	private fun drawColorPreview() {
 		val currentColor = currentEditableLaserColor() ?: return
 		val left = width - 140
 		val top = height - 66
-		drawString(fontRenderer, "H", left - 12, top + 4, 0xF3EFE0)
-		drawString(fontRenderer, "S", left - 12, top + 20, 0xF3EFE0)
+		TACZAsciiFontHelper.drawStringWithShadow(fontRenderer, "H", (left - 12).toFloat(), (top + 4).toFloat(), 0xF3EFE0)
+		TACZAsciiFontHelper.drawStringWithShadow(fontRenderer, "S", (left - 12).toFloat(), (top + 20).toFloat(), 0xF3EFE0)
 		drawRect(left + 124, top + 2, left + 140, top + 18, 0xFF000000.toInt() or (currentColor and 0xFFFFFF))
 	}
 
@@ -663,22 +670,26 @@ internal class GunRefitScreen : GuiScreen() {
 			.filterIsInstance<RefitTooltipButton>()
 			.firstOrNull { it.contains(mouseX, mouseY) && it.tooltipLines.isNotEmpty() }
 			?.let {
-				drawHoveringText(it.tooltipLines, mouseX, mouseY)
+				TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, it.tooltipLines, Runnable { drawHoveringText(it.tooltipLines, mouseX, mouseY) })
 				return
 			}
 
 		slotButtons.firstOrNull { it.contains(mouseX, mouseY) }?.let { button ->
 			val stack = button.displayedAttachment()
 			if (!stack.isEmpty) {
-				renderToolTip(stack, mouseX, mouseY)
+				val tooltipFlag = if (mc.gameSettings.advancedItemTooltips) ITooltipFlag.TooltipFlags.ADVANCED else ITooltipFlag.TooltipFlags.NORMAL
+				val tooltipLines = stack.getTooltip(mc.player, tooltipFlag)
+				TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, tooltipLines, Runnable { renderToolTip(stack, mouseX, mouseY) })
 			} else {
-				drawHoveringText(listOf(attachmentTypeLabel(button.type)), mouseX, mouseY)
+				val lines = listOf(attachmentTypeLabel(button.type))
+				TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, lines, Runnable { drawHoveringText(lines, mouseX, mouseY) })
 			}
 			return
 		}
 
 		inventoryButtons.firstOrNull { it.contains(mouseX, mouseY) }?.let { button ->
-			drawHoveringText(buildCandidateTooltip(button.candidate), mouseX, mouseY)
+			val lines = buildCandidateTooltip(button.candidate)
+			TACZAsciiFontHelper.runWithTemporaryUnicodeFlagDisabled(fontRenderer, lines, Runnable { drawHoveringText(lines, mouseX, mouseY) })
 			return
 		}
 	}
@@ -1148,7 +1159,7 @@ internal class GunRefitScreen : GuiScreen() {
 			if (!displayStack.isEmpty) {
 				RenderHelper.enableGUIStandardItemLighting()
 				itemRender.renderItemAndEffectIntoGUI(displayStack, x + 1, y + 1)
-				itemRender.renderItemOverlayIntoGUI(fontRenderer, displayStack, x + 1, y + 1, null)
+				TACZAsciiFontHelper.renderItemOverlayIntoGUI(itemRender, fontRenderer, displayStack, x + 1, y + 1, null)
 				RenderHelper.disableStandardItemLighting()
 			} else {
 				mc.textureManager.bindTexture(TACZ_REFIT_SLOT_ICONS_TEXTURE)
@@ -1167,7 +1178,7 @@ internal class GunRefitScreen : GuiScreen() {
 				GlStateManager.color(1f, 1f, 1f, 1f)
 			}
 			if (hovered) {
-				drawCenteredString(fontRenderer, attachmentTypeLabel(type), x + width / 2, y + if (!displayStack.isEmpty && selectedType == type) 30 else 20, 0xFFFFFF)
+				TACZAsciiFontHelper.drawCenteredStringWithShadow(fontRenderer, attachmentTypeLabel(type), x + width / 2, y + if (!displayStack.isEmpty && selectedType == type) 30 else 20, 0xFFFFFF)
 			}
 		}
 
@@ -1198,7 +1209,7 @@ internal class GunRefitScreen : GuiScreen() {
 			}
 			RenderHelper.enableGUIStandardItemLighting()
 			itemRender.renderItemAndEffectIntoGUI(candidate.stack, x + 1, y + 1)
-			itemRender.renderItemOverlayIntoGUI(fontRenderer, candidate.stack, x + 1, y + 1, null)
+			TACZAsciiFontHelper.renderItemOverlayIntoGUI(itemRender, fontRenderer, candidate.stack, x + 1, y + 1, null)
 			RenderHelper.disableStandardItemLighting()
 		}
 
@@ -1226,7 +1237,7 @@ internal class GunRefitScreen : GuiScreen() {
 			drawHorizontalLine(x, x + width - 1, y + height - 1, border)
 			drawVerticalLine(x, y, y + height - 1, border)
 			drawVerticalLine(x + width - 1, y, y + height - 1, border)
-			drawCenteredString(fontRenderer, displayString, x + width / 2, y + (height - 8) / 2, 0xF3EFE0)
+			TACZAsciiFontHelper.drawCenteredStringWithShadow(fontRenderer, displayString, x + width / 2, y + (height - 8) / 2, 0xF3EFE0)
 		}
 
 		override fun contains(mouseX: Int, mouseY: Int): Boolean = mouseX >= x && mouseY >= y && mouseX < x + width && mouseY < y + height

@@ -5,10 +5,12 @@ import com.tacz.legacy.common.config.LegacyConfigManager
 import com.tacz.legacy.common.resource.TACZGunPackRuntimeRegistry
 import net.minecraft.init.Bootstrap
 import net.minecraft.item.ItemStack
+import net.minecraft.nbt.NBTTagCompound
 import net.minecraft.util.ResourceLocation
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
 import org.junit.Test
@@ -102,6 +104,39 @@ class LegacyRuntimeTooltipSupportTest {
         assertTrue(tooltip.any { it.contains("demo:test_round") })
     }
 
+      @Test
+      fun `resolve gun display id prefers stack override and falls back safely`() {
+        loadDemoPack()
+        val gunItem = ModernKineticGunItem()
+        val stack = ItemStack(gunItem)
+        val gunId = ResourceLocation("demo", "test_rifle")
+
+        gunItem.setGunId(stack, gunId)
+
+        assertEquals(
+          ResourceLocation("demo", "test_rifle_display"),
+          LegacyRuntimeTooltipSupport.resolveGunDisplayId(stack, gunItem),
+        )
+
+        stack.tagCompound = NBTTagCompound().apply {
+          setString(LegacyRuntimeTooltipSupport.GUN_DISPLAY_ID_TAG, "demo:test_rifle_display_override")
+        }
+        assertEquals(
+          ResourceLocation("demo", "test_rifle_display_override"),
+          LegacyRuntimeTooltipSupport.resolveGunDisplayId(stack, gunItem),
+        )
+
+        stack.tagCompound = NBTTagCompound().apply {
+          setString(LegacyRuntimeTooltipSupport.GUN_DISPLAY_ID_TAG, "demo:missing_display")
+        }
+        assertEquals(
+          ResourceLocation("demo", "test_rifle_display"),
+          LegacyRuntimeTooltipSupport.resolveGunDisplayId(stack, gunItem),
+        )
+
+        assertNull(LegacyRuntimeTooltipSupport.resolveGunDisplayId(ItemStack.EMPTY))
+      }
+
     private fun loadDemoPack() {
         val root = Files.createTempDirectory("tacz-tooltip-runtime").toFile()
         gameDir = root
@@ -167,6 +202,12 @@ class LegacyRuntimeTooltipSupportTest {
         writeJson(File(packRoot, "assets/demo/display/guns/test_rifle_display.json"), """
             {
               "hud": "demo:gun/hud/test_rifle"
+            }
+        """.trimIndent())
+        writeJson(File(packRoot, "assets/demo/display/guns/test_rifle_display_override.json"), """
+            {
+              "hud": "demo:gun/hud/test_rifle_override",
+              "ammo_count_style": "percent"
             }
         """.trimIndent())
 

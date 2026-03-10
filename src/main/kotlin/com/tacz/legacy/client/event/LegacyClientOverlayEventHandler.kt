@@ -3,6 +3,7 @@ package com.tacz.legacy.client.event
 import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.gun.FireMode
 import com.tacz.legacy.api.entity.IGunOperator
+import com.tacz.legacy.client.foundation.TACZAsciiFontHelper
 import com.tacz.legacy.client.gameplay.LegacyClientGunAnimationDriver
 import com.tacz.legacy.client.input.LegacyInputExtraCheck
 import com.tacz.legacy.client.input.LegacyKeyBindings
@@ -194,14 +195,15 @@ internal object LegacyClientOverlayEventHandler {
 
         GlStateManager.pushMatrix()
         GlStateManager.scale(1.5f, 1.5f, 1f)
-        font.drawString(currentAmmoText, ((width - 70) / 1.5f).toInt(), ((height - 43) / 1.5f).toInt(), ammoCountColor)
+        TACZAsciiFontHelper.drawString(font, currentAmmoText, ((width - 70) / 1.5f).toInt(), ((height - 43) / 1.5f).toInt(), ammoCountColor)
         GlStateManager.popMatrix()
 
         GlStateManager.pushMatrix()
         GlStateManager.scale(0.8f, 0.8f, 1f)
-        font.drawString(
+        TACZAsciiFontHelper.drawString(
+            font,
             reserveText,
-            ((width - 68 + font.getStringWidth(currentAmmoText) * 1.5f) / 0.8f).toInt(),
+            ((width - 68 + TACZAsciiFontHelper.getStringWidth(font, currentAmmoText) * 1.5f) / 0.8f).toInt(),
             ((height - 43) / 0.8f).toInt(),
             reserveColor,
         )
@@ -233,7 +235,7 @@ internal object LegacyClientOverlayEventHandler {
         }
         mc.textureManager.bindTexture(fireModeTexture)
         Gui.drawModalRectWithCustomSizedTexture(
-            (width - 68.5 + font.getStringWidth(currentAmmoText) * 1.5).toInt(),
+            (width - 68.5 + TACZAsciiFontHelper.getStringWidth(font, currentAmmoText) * 1.5).toInt(),
             height - 38,
             0f,
             0f,
@@ -377,7 +379,13 @@ internal object LegacyClientOverlayEventHandler {
         } else {
             0xFFFFFFFF.toInt()
         }
-        mc.fontRenderer.drawStringWithShadow(percentText, (scaledWidth / 2f - mc.fontRenderer.getStringWidth(percentText) / 2f), (scaledHeight / 2f + 38f), textColor)
+        TACZAsciiFontHelper.drawStringWithShadow(
+            mc.fontRenderer,
+            percentText,
+            (scaledWidth / 2f - TACZAsciiFontHelper.getStringWidth(mc.fontRenderer, percentText) / 2f),
+            (scaledHeight / 2f + 38f),
+            textColor,
+        )
         GlStateManager.popMatrix()
     }
 
@@ -394,13 +402,13 @@ internal object LegacyClientOverlayEventHandler {
         val snapshot = LegacyHitFeedbackState.currentKillAmountSnapshot(System.currentTimeMillis(), timeoutMs) ?: return
         val width = event.resolution.scaledWidth
         val height = event.resolution.scaledHeight
-        val fontWidth = mc.fontRenderer.getStringWidth(snapshot.text)
+        val fontWidth = TACZAsciiFontHelper.getStringWidth(mc.fontRenderer, snapshot.text)
 
         GlStateManager.enableBlend()
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
         GlStateManager.pushMatrix()
         GlStateManager.scale(0.5f, 0.5f, 1f)
-        mc.fontRenderer.drawStringWithShadow(snapshot.text, width.toFloat() - fontWidth / 2f, (height - 45) * 2f - 1f, snapshot.color)
+        TACZAsciiFontHelper.drawStringWithShadow(mc.fontRenderer, snapshot.text, width.toFloat() - fontWidth / 2f, (height - 45) * 2f - 1f, snapshot.color)
         GlStateManager.popMatrix()
         GlStateManager.disableBlend()
     }
@@ -428,7 +436,13 @@ internal object LegacyClientOverlayEventHandler {
         val font = mc.fontRenderer
         val width = event.resolution.scaledWidth
         val height = event.resolution.scaledHeight
-        font.drawStringWithShadow(text, ((width - font.getStringWidth(text)) / 2f), (height / 2f - 25f), TextFormatting.YELLOW.colorIndex?.let { 0xFFFF55 } ?: 0xFFFF55)
+        TACZAsciiFontHelper.drawStringWithShadow(
+            font,
+            text,
+            ((width - TACZAsciiFontHelper.getStringWidth(font, text)) / 2f),
+            (height / 2f - 25f),
+            TextFormatting.YELLOW.colorIndex?.let { 0xFFFF55 } ?: 0xFFFF55,
+        )
     }
 
     private fun prettyKeyName(keyName: String): String {

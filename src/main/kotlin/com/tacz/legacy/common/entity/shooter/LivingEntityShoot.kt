@@ -220,7 +220,7 @@ public class LivingEntityShoot(
             }
 
             val processedSpeed = bulletData.getProcessedSpeed()
-            val bulletAmount = bulletData.bulletAmount.coerceAtLeast(1)
+            val bulletAmount = TACZBulletSpreadResolver.resolveBulletAmount(gunItem, iGun, gunData)
             val pitchVal = pitch.get()
             val yawVal = yaw.get()
 
@@ -231,7 +231,18 @@ public class LivingEntityShoot(
                     gunId, gunDisplayId, ammoId, isTracer,
                 )
                 bullet.applyShotgunDamageSpread(bulletAmount)
-                bullet.shootFromRotation(shooter, pitchVal, yawVal, processedSpeed, 1.0f)
+                TACZBulletSpreadResolver.applySpread(
+                    shooter = shooter,
+                    dataHolder = data,
+                    gunItem = gunItem,
+                    iGun = iGun,
+                    gunData = gunData,
+                    bullet = bullet,
+                    bulletIndex = i,
+                    processedSpeed = processedSpeed,
+                    pitch = pitchVal,
+                    yaw = yawVal,
+                )
                 shooter.world.spawnEntity(bullet)
             }
         }
