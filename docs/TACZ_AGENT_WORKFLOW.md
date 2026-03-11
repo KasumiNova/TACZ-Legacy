@@ -22,8 +22,10 @@
 
 至少更新以下文档中的一类：
 
-- `docs/TACZ_AGENT_MIGRATION_PLAN.md`
-  - 用于同步当前阶段进度、子轨状态、文件所有权、下一阶段顺序。
+- `docs/migration_plan/MAIN.md`
+  - 用于同步稳定入口、轨道边界、Prompt 总路由、推荐顺序与文档维护规则。
+- `docs/migration_plan/*.md` 中对应的分类分册
+  - 用于同步当前阶段进度、子轨状态、文件所有权、focused smoke/单测结论与阶段性剩余问题。
 - 对应子系统设计文档，例如：
   - `docs/TACZ_AUDIO_ENGINE_PLAN.md`
   - 未来新增的 render/combat/refit 设计文档
@@ -33,9 +35,14 @@
 规则：
 
 - **正式状态、边界、验收标准**必须进入 Git 受控文档。
-- 如果本轮任务改变了“谁负责什么”“下一轮还剩什么”，优先更新 `docs/TACZ_AGENT_MIGRATION_PLAN.md`。
+- 如果本轮任务改变了“谁负责什么”“下一轮还剩什么”“Prompt 怎么分流”，优先更新 `docs/migration_plan/MAIN.md`，并在需要时同步更新对应分类分册。
+- 如果本轮任务产生了**较长的阶段状态、验证记录或 reopen 结论**，优先更新对应 `docs/migration_plan/YYYY-MM-DD-CATEGORY.md` 风格的分类分册，而不是把长文重新堆回入口文件。
 - 如果本轮任务改变了“这个子系统现在怎么设计/怎么验证”，优先更新对应设计文档。
 - 如果本轮任务改变了“下次 Agent 应该怎么做”，必须更新对应 Prompt。
+
+补充：
+
+- `docs/TACZ_AGENT_MIGRATION_PLAN.md` 现在只保留为**兼容跳板**，用于照顾旧引用；默认不再作为主更新目标。
 
 ### 2. 写入本地临时阶段报告
 
@@ -47,7 +54,37 @@
 
 该目录**只用于本地协作，不提交 Git**。
 
-## 本地临时工作区规范
+## 迁移计划分册规则
+
+从 2026-03-10 起，迁移计划默认使用 `docs/migration_plan/` 目录下的多文档结构。
+
+### 入口与职责
+
+- `docs/migration_plan/MAIN.md`
+  - 保持短、稳、可导航。
+  - 只放轨道边界、推荐顺序、Prompt 总路由、文档维护规则。
+- `docs/migration_plan/YYYY-MM-DD-CATEGORY.md`
+  - 存放长篇阶段状态、focused smoke 证据、reopen 结论、子轨剩余问题。
+  - 其中 `CATEGORY` 指文档的大分类，而不是序号；文件名日期表示该分类文档的建档/结构整理日期，而不是正文里所有开发记录的唯一发生日期。
+- `docs/TACZ_AGENT_MIGRATION_PLAN.md`
+  - 仅为兼容入口页，不承载新的长篇阶段正文。
+
+### 更新原则
+
+- **不要**把大段阶段日志直接追加回 `MAIN.md`。
+- 如果本轮只是增加了大量阶段细节，应更新已有分类分册；若没有合适分册，再新建一份分类文档。
+- 分类分册的命名规则：`YYYY-MM-DD-CATEGORY.md`
+- `CATEGORY` 应写“大分类”名称，例如 `FOUNDATION-TO-CLIENT-UX`、`RENDER-VALIDATION-AND-PROMPTS`，不要再使用 `CATEGORY_A` / `CATEGORY_B` 这类编号式名字。
+- 如果分类文档中汇总了多天开发内容，必须在正文章节中标注真实日期，避免文件名日期误导读者。
+- 若当前改动既影响稳定路由，又带来大量阶段细节，应该同时更新：
+  1. `MAIN.md`
+  2. 相关分类分册
+
+### 主 Agent 默认读取顺序
+
+1. `docs/migration_plan/MAIN.md`
+2. 与当前任务最相关的分类分册
+3. `.agent-workspace/stage-reports/` 中最近的阶段报告
 
 ### 目录
 
@@ -108,12 +145,13 @@
 
 主 Agent 在收口时，优先读取：
 
-1. `docs/TACZ_AGENT_MIGRATION_PLAN.md` 中的正式进度
-2. `.agent-workspace/stage-reports/` 中最近的阶段报告文件
+1. `docs/migration_plan/MAIN.md` 中的稳定入口与当前总路由
+2. `docs/migration_plan/` 中与当前任务相关的 dated category 分册
+3. `.agent-workspace/stage-reports/` 中最近的阶段报告文件
 
 这样可以做到：
 
-- Git 文档负责长期状态
+- Git 文档负责长期状态，但拆成“短入口 + 长分册”两层
 - 本地阶段报告负责快速确认与短周期 handoff
 - 用户不再需要手动截图同步阶段结果
 
@@ -140,8 +178,8 @@
 
 ## 当前仓库建议
 
-- 音频 Agent：完成后同步更新 `docs/TACZ_AUDIO_ENGINE_PLAN.md`
-- 渲染 Agent：完成后同步更新 render 相关 Prompt / 设计文档 / 迁移计划
-- Combat Agent：完成后同步更新 `docs/TACZ_AGENT_MIGRATION_PLAN.md` 中的 combat 状态与验收结论
-- Foundation Agent：完成后同步更新 smoke / hook / 诊断覆盖范围说明
+- 音频 Agent：完成后同步更新 `docs/TACZ_AUDIO_ENGINE_PLAN.md`，并在 `docs/migration_plan/` 对应分册记录阶段结论
+- 渲染 Agent：完成后同步更新 render 相关 Prompt / 设计文档 / `docs/migration_plan/` 中的 render 分册
+- Combat Agent：完成后同步更新 `docs/migration_plan/` 中的 combat / gameplay 相关分册与验收结论
+- Foundation Agent：完成后同步更新 `docs/migration_plan/MAIN.md`（若影响路由/边界）或对应分册（若影响阶段状态），并补 smoke / hook / 诊断覆盖范围说明
 - 视觉检查优先使用工作区内 `scripts/capture_window.sh`；便携化说明见 `docs/AGENT_SCREENSHOT_WORKFLOW.md`
