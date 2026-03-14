@@ -13,6 +13,7 @@ import com.tacz.legacy.client.input.LegacyKeyBindings
 import com.tacz.legacy.client.sound.TACZClientGunSoundCoordinator
 import com.tacz.legacy.common.config.LegacyConfigManager
 import com.tacz.legacy.common.application.refit.LegacyGunRefitRuntime
+import com.tacz.legacy.common.foundation.FocusedSmokeRuntime
 import com.tacz.legacy.common.network.TACZNetworkHandler
 import com.tacz.legacy.common.network.message.client.ClientMessagePlayerAim
 import com.tacz.legacy.common.network.message.client.ClientMessagePlayerBolt
@@ -62,7 +63,9 @@ internal object LegacyClientPlayerGunBridge {
             lastShootSuccess = false
             lastShootKeyDown = false
             lastSprinting = false
-            if (operator.getSynIsAiming()) {
+            if (FocusedSmokeRuntime.isForcedAimActive && IGun.mainHandHoldGun(player)) {
+                setAimState(operator, true)
+            } else if (operator.getSynIsAiming()) {
                 setAimState(operator, false)
             }
             operator.tick()
@@ -129,6 +132,10 @@ internal object LegacyClientPlayerGunBridge {
             if (operator.getSynIsAiming()) {
                 setAimState(operator, false)
             }
+            return
+        }
+        if (FocusedSmokeRuntime.isForcedAimActive) {
+            setAimState(operator, true)
             return
         }
         if (LegacyConfigManager.client.holdToAim) {

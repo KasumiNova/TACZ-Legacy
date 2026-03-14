@@ -1,6 +1,9 @@
 package com.tacz.legacy.client.resource.pojo.display.attachment;
 
+import com.google.common.collect.Maps;
 import com.google.gson.annotations.SerializedName;
+import com.tacz.legacy.client.resource.pojo.display.LaserConfig;
+import com.tacz.legacy.client.resource.pojo.display.gun.TextShow;
 import net.minecraft.util.ResourceLocation;
 
 import javax.annotation.Nullable;
@@ -55,6 +58,13 @@ public class AttachmentDisplay {
     @Nullable
     @SerializedName("sounds")
     private Map<String, ResourceLocation> sounds;
+
+    @Nullable
+    @SerializedName("laser")
+    private LaserConfig laserConfig;
+
+    @SerializedName("text_show")
+    private Map<String, TextShow> textShows = Maps.newHashMap();
 
     public ResourceLocation getSlotTextureLocation() {
         return slotTextureLocation;
@@ -112,6 +122,15 @@ public class AttachmentDisplay {
     @Nullable
     public Map<String, ResourceLocation> getSounds() {
         return sounds;
+    }
+
+    @Nullable
+    public LaserConfig getLaserConfig() {
+        return laserConfig;
+    }
+
+    public Map<String, TextShow> getTextShows() {
+        return textShows;
     }
 
     /**

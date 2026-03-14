@@ -11,6 +11,8 @@ internal data class TACZAttachmentLaserConfigDefinition(
     val canEdit: Boolean,
     val length: Int,
     val width: Float,
+    val thirdPersonLength: Float,
+    val thirdPersonWidth: Float,
 )
 
 internal object TACZGunPackPresentation {
@@ -170,6 +172,12 @@ internal object TACZGunPackPresentation {
             width = laser.floatValue("width")
                 ?.takeIf { it > 0.0f }
                 ?: 0.008f,
+            thirdPersonLength = laser.floatValue("third_person_length")
+                ?.takeIf { it > 0.0f }
+                ?: 2.0f,
+            thirdPersonWidth = laser.floatValue("third_person_width")
+                ?.takeIf { it > 0.0f }
+                ?: 0.008f,
         )
     }
 
@@ -193,6 +201,12 @@ internal object TACZGunPackPresentation {
                 .takeIf { it > 0 }
                 ?: 25,
             width = laser.floatValue("width")
+                ?.takeIf { it > 0.0f }
+                ?: 0.008f,
+            thirdPersonLength = laser.floatValue("third_person_length")
+                ?.takeIf { it > 0.0f }
+                ?: 2.0f,
+            thirdPersonWidth = laser.floatValue("third_person_width")
                 ?.takeIf { it > 0.0f }
                 ?: 0.008f,
         )
@@ -320,11 +334,12 @@ internal object TACZGunPackPresentation {
         if (normalized.isBlank()) {
             return DEFAULT_LASER_COLOR
         }
-        return runCatching { Integer.decode(normalized) }.getOrDefault(DEFAULT_LASER_COLOR)
+        return runCatching { Integer.decode(normalized) and 0xFFFFFF }.getOrDefault(INVALID_LASER_COLOR)
     }
 
     private const val TAG_PREFIX: String = "#"
     private const val DEFAULT_LASER_COLOR: Int = 0xFF0000
+    private const val INVALID_LASER_COLOR: Int = 0xFFFFFF
     private const val DEFAULT_LOCALE: String = "en_us"
 }
 

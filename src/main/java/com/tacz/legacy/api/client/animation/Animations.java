@@ -28,17 +28,22 @@ public class Animations {
             ObjectAnimation animation = new ObjectAnimation(animationModel.getName());
             for (GltfAnimationData.Channel channelModel : animationModel.getChannels()) {
                 ObjectAnimationChannel channel = new ObjectAnimationChannel(ObjectAnimationChannel.ChannelType.valueOf(channelModel.getPath().name()));
-                switch (channelModel.getInterpolation()) {
-                    case STEP:
-                        channel.interpolator = InterpolatorUtil.fromInterpolation(InterpolatorUtil.InterpolatorType.STEP);
-                        break;
-                    case SPLINE:
-                        channel.interpolator = InterpolatorUtil.fromInterpolation(InterpolatorUtil.InterpolatorType.SPLINE);
-                        break;
-                    case LINEAR:
-                    default:
-                        channel.interpolator = InterpolatorUtil.fromInterpolation(InterpolatorUtil.InterpolatorType.LINEAR);
-                        break;
+                if (channel.type == ObjectAnimationChannel.ChannelType.ROTATION
+                        && channelModel.getInterpolation() == GltfAnimationData.Interpolation.LINEAR) {
+                    channel.interpolator = InterpolatorUtil.fromInterpolation(InterpolatorUtil.InterpolatorType.SLERP);
+                } else {
+                    switch (channelModel.getInterpolation()) {
+                        case STEP:
+                            channel.interpolator = InterpolatorUtil.fromInterpolation(InterpolatorUtil.InterpolatorType.STEP);
+                            break;
+                        case SPLINE:
+                            channel.interpolator = InterpolatorUtil.fromInterpolation(InterpolatorUtil.InterpolatorType.SPLINE);
+                            break;
+                        case LINEAR:
+                        default:
+                            channel.interpolator = InterpolatorUtil.fromInterpolation(InterpolatorUtil.InterpolatorType.LINEAR);
+                            break;
+                    }
                 }
                 channel.node = channelModel.getNodeName();
 
@@ -46,58 +51,47 @@ public class Animations {
                 if (animationListener == null) {
                     continue;
                 }
-                float[] inverseValue = animationListener.initialValue();
+                float[] inverseValue = Arrays.copyOf(animationListener.initialValue(), animationListener.initialValue().length);
                 float[] keyframeTimeS = Arrays.copyOf(channelModel.getKeyframeTimeS(), channelModel.getKeyframeTimeS().length);
                 float[][] values = new float[channelModel.getValues().length][];
-                for (int i = 0; i < channelModel.getValues().length; i++) {
-                    values[i] = Arrays.copyOf(channelModel.getValues()[i], channelModel.getValues()[i].length);
+
+                if (channel.type == ObjectAnimationChannel.ChannelType.ROTATION) {
+                    if (inverseValue.length == 3) {
+                        inverseValue = MathUtil.toQuaternion(inverseValue[0], inverseValue[1], inverseValue[2]);
+                    }
+                    inverseValue = MathUtil.inverseQuaternion(inverseValue);
+                } else if (channel.type == ObjectAnimationChannel.ChannelType.TRANSLATION && inverseValue.length >= 3) {
+                    inverseValue[0] = -inverseValue[0];
+                    inverseValue[1] = -inverseValue[1];
+                    inverseValue[2] = -inverseValue[2];
                 }
 
-                switch (channel.type) {
-                    case ROTATION:
-                        if (inverseValue.length >= 3) {
-                            float[] inverseQuaternion = MathUtil.inverseQuaternion(
-                                    MathUtil.toQuaternion(inverseValue[0], inverseValue[1], inverseValue[2])
-                            );
-                            for (float[] value : values) {
-                                if (value.length < 4) {
-                                    continue;
-                                }
-                                for (int offset = 0; offset + 3 < value.length; offset += 4) {
-                                    float[] valueQuaternion = Arrays.copyOfRange(value, offset, offset + 4);
-                                    float[] output = MathUtil.toEulerAngles(MathUtil.mulQuaternion(inverseQuaternion, valueQuaternion));
-                                    value[offset] = output[0];
-                                    value[offset + 1] = output[1];
-                                    value[offset + 2] = output[2];
+                for (int i = 0; i < channelModel.getValues().length; i++) {
+                    values[i] = Arrays.copyOf(channelModel.getValues()[i], channelModel.getValues()[i].length);
+                    switch (channel.type) {
+                        case ROTATION:
+                            if (inverseValue.length >= 4) {
+                                for (int offset = 0; offset + 3 < values[i].length; offset += 4) {
+                                    float[] rawQuaternion = Arrays.copyOfRange(values[i], offset, offset + 4);
+                                    float[] rawEuler = MathUtil.toEulerAngles(rawQuaternion);
+                                    float[] legacyQuaternion = MathUtil.toQuaternion(-rawEuler[0], -rawEuler[1], rawEuler[2]);
+                                    float[] resultQuaternion = MathUtil.mulQuaternion(inverseValue, legacyQuaternion);
+                                    System.arraycopy(resultQuaternion, 0, values[i], offset, 4);
                                 }
                             }
-                        }
-                        break;
-                    case SCALE:
-                        if (inverseValue.length >= 3) {
-                            for (float[] value : values) {
-                                for (int offset = 0; offset + 2 < value.length; offset += 3) {
-                                    value[offset] /= inverseValue[0];
-                                    value[offset + 1] /= inverseValue[1];
-                                    value[offset + 2] /= inverseValue[2];
+                            break;
+                        case TRANSLATION:
+                            if (inverseValue.length >= 3) {
+                                for (int offset = 0; offset + 2 < values[i].length; offset += 3) {
+                                    values[i][offset] = -values[i][offset] + inverseValue[0];
+                                    values[i][offset + 1] = -(-values[i][offset + 1] + inverseValue[1]);
+                                    values[i][offset + 2] = values[i][offset + 2] + inverseValue[2];
                                 }
                             }
-                        }
-                        break;
-                    case TRANSLATION:
-                        float[] defaultValue = channelModel.getDefaultValue();
-                        if (defaultValue.length >= 3) {
-                            for (float[] value : values) {
-                                for (int offset = 0; offset + 2 < value.length; offset += 3) {
-                                    value[offset] -= defaultValue[0];
-                                    value[offset + 1] -= defaultValue[1];
-                                    value[offset + 2] -= defaultValue[2];
-                                }
-                            }
-                        }
-                        break;
-                    default:
-                        break;
+                            break;
+                        default:
+                            break;
+                    }
                 }
 
                 channel.content.keyframeTimeS = keyframeTimeS;

@@ -8,6 +8,7 @@ import com.tacz.legacy.api.vmlib.LuaGunAnimationConstant
 import com.tacz.legacy.api.vmlib.LuaLibrary
 import com.tacz.legacy.client.audio.TACZAudioReference
 import com.tacz.legacy.client.audio.TACZAudioRuntime
+import com.tacz.legacy.client.model.BedrockAmmoModel
 import com.tacz.legacy.client.sound.GunPackAssetLocator
 import com.tacz.legacy.client.sound.GunPackSoundResourcePack
 import com.tacz.legacy.client.resource.index.ClientAttachmentIndex
@@ -28,6 +29,8 @@ import com.tacz.legacy.client.resource.serialize.AnimationKeyframesSerializer
 import com.tacz.legacy.client.resource.serialize.SoundEffectKeyframesSerializer
 import com.tacz.legacy.client.resource.serialize.Vector3fSerializer
 import com.tacz.legacy.common.resource.TACZDisplayDefinition
+import com.tacz.legacy.common.resource.TACZGunPackPresentation
+import com.tacz.legacy.common.resource.TACZGunPackRuntimeRegistry
 import com.tacz.legacy.common.resource.TACZLoadedPack
 import com.tacz.legacy.common.resource.TACZRuntimeSnapshot
 import net.minecraft.client.Minecraft
@@ -41,12 +44,14 @@ import org.luaj.vm2.lib.Bit32Lib
 import org.luaj.vm2.lib.PackageLib
 import org.luaj.vm2.lib.TableLib
 import org.luaj.vm2.lib.jse.*
+import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.File
 import java.io.InputStream
 import java.io.StringReader
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.util.ArrayDeque
 import java.util.zip.ZipFile
 import javax.imageio.ImageIO
 
@@ -95,8 +100,13 @@ internal object TACZClientAssetManager {
     data class ModelData(val pojo: BedrockModelPOJO, val version: BedrockVersion)
     private val models = LinkedHashMap<ResourceLocation, ModelData>()
 
+    data class ShellRenderAsset(val model: BedrockAmmoModel, val textureLocation: ResourceLocation)
+
     /** Texture ResourceLocations registered with the TextureManager, keyed by pack texture path. */
     private val textures = LinkedHashMap<ResourceLocation, ResourceLocation>()
+
+    /** GUI-safe 16×16 attachment slot thumbnails keyed by original slot texture path. */
+    private val guiSlotTextures = LinkedHashMap<ResourceLocation, ResourceLocation>()
 
     /** Parsed bedrock animation files keyed by animation ResourceLocation. */
     private val animations = LinkedHashMap<ResourceLocation, BedrockAnimationFile>()
@@ -128,17 +138,29 @@ internal object TACZClientAssetManager {
     /** Cached ClientAttachmentIndex objects, keyed by attachment ResourceLocation. */
     private val attachmentIndices = LinkedHashMap<ResourceLocation, ClientAttachmentIndex>()
 
+    /** Cached shell render assets keyed by ammo ResourceLocation. */
+    private val ammoShellRenderAssets = LinkedHashMap<ResourceLocation, ShellRenderAsset?>()
+
     fun getGunDisplay(id: ResourceLocation): GunDisplay? = gunDisplays[id]
     fun getAmmoDisplay(id: ResourceLocation): AmmoDisplay? = ammoDisplays[id]
     fun getAttachmentDisplay(id: ResourceLocation): AttachmentDisplay? = attachmentDisplays[id]
     fun getBlockDisplay(id: ResourceLocation): BlockDisplay? = blockDisplays[id]
     fun getModel(id: ResourceLocation): ModelData? = models[id]
     fun getTextureLocation(id: ResourceLocation): ResourceLocation? = textures[id]
+    fun getGuiSlotTextureLocation(id: ResourceLocation): ResourceLocation? = guiSlotTextures[id]
     fun getAnimationFile(id: ResourceLocation): BedrockAnimationFile? = animations[id]
     fun getGltfAnimation(id: ResourceLocation): GltfAnimationData? = gltfAnimations[id]
     fun getScript(id: ResourceLocation): LuaTable? = scripts[id]
     fun getGunDisplayInstance(displayId: ResourceLocation): GunDisplayInstance? = gunDisplayInstances[displayId]
     fun getAttachmentIndex(attachmentId: ResourceLocation): ClientAttachmentIndex? = attachmentIndices[attachmentId]
+    fun getAmmoShellRenderAsset(ammoId: ResourceLocation): ShellRenderAsset? {
+        if (ammoShellRenderAssets.containsKey(ammoId)) {
+            return ammoShellRenderAssets[ammoId]
+        }
+        val built = buildAmmoShellRenderAsset(ammoId)
+        ammoShellRenderAssets[ammoId] = built
+        return built
+    }
     fun hasPackAsset(id: ResourceLocation): Boolean = GunPackAssetLocator.resourceExists(packSources, id)
     fun openPackAsset(id: ResourceLocation): InputStream? = try {
         GunPackAssetLocator.openResource(packSources, id)
@@ -190,6 +212,8 @@ internal object TACZClientAssetManager {
             display.slotTextureLocation?.let(neededTextures::add)
             display.ammoEntity?.modelLocation?.let(neededModels::add)
             display.ammoEntity?.modelTexture?.let(neededTextures::add)
+            display.shellDisplay?.modelLocation?.let(neededModels::add)
+            display.shellDisplay?.modelTexture?.let(neededTextures::add)
         }
 
         for (display in attachmentDisplays) {
@@ -297,12 +321,16 @@ internal object TACZClientAssetManager {
         for (texLoc in textures.values) {
             textureManager.deleteTexture(texLoc)
         }
+        for (texLoc in guiSlotTextures.values) {
+            textureManager.deleteTexture(texLoc)
+        }
         gunDisplays.clear()
         ammoDisplays.clear()
         attachmentDisplays.clear()
         blockDisplays.clear()
         models.clear()
         textures.clear()
+        guiSlotTextures.clear()
         animations.clear()
         gltfAnimations.clear()
         soundResources.clear()
@@ -312,7 +340,22 @@ internal object TACZClientAssetManager {
         pendingScriptSources.clear()
         attachmentIndices.clear()
         gunDisplayInstances.clear()
+        ammoShellRenderAssets.clear()
         TACZAudioRuntime.clear()
+    }
+
+    private fun buildAmmoShellRenderAsset(ammoId: ResourceLocation): ShellRenderAsset? {
+        val snapshot = TACZGunPackRuntimeRegistry.getSnapshot()
+        val displayId = TACZGunPackPresentation.resolveAmmoDisplayId(snapshot, ammoId) ?: return null
+        val display = ammoDisplays[displayId] ?: return null
+        val shellDisplay = display.shellDisplay ?: return null
+        val modelLocation = shellDisplay.modelLocation ?: return null
+        val textureLocation = shellDisplay.modelTexture?.let(::getTextureLocation) ?: return null
+        val modelData = models[modelLocation] ?: return null
+        return ShellRenderAsset(
+            model = BedrockAmmoModel(modelData.pojo, modelData.version),
+            textureLocation = textureLocation,
+        )
     }
 
     private fun registerSoundReference(
@@ -612,6 +655,87 @@ internal object TACZClientAssetManager {
         // Register with a unique location under tacz_dynamic namespace to avoid collision
         val registeredLoc = textureManager.getDynamicTextureLocation("tacz_pack", dynamicTexture)
         textures[id] = registeredLoc
+        if (isAttachmentSlotTexture(id)) {
+            val guiTexture = DynamicTexture(buildGuiSlotThumbnail(image))
+            guiSlotTextures[id] = textureManager.getDynamicTextureLocation("tacz_pack_gui_slot", guiTexture)
+        }
+    }
+
+    private fun isAttachmentSlotTexture(id: ResourceLocation): Boolean = id.path.startsWith("attachment/slot/")
+
+    private fun buildGuiSlotThumbnail(source: BufferedImage): BufferedImage {
+        val bled = bleedTransparentPixelRgb(source)
+        val thumbnail = BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB)
+        val graphics = thumbnail.createGraphics()
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR)
+        graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_SPEED)
+        graphics.drawImage(bled, 0, 0, 16, 16, null)
+        graphics.dispose()
+        return bleedTransparentPixelRgb(thumbnail)
+    }
+
+    private fun bleedTransparentPixelRgb(source: BufferedImage): BufferedImage {
+        val width = source.width
+        val height = source.height
+        val pixels = IntArray(width * height)
+        val visited = BooleanArray(width * height)
+        val queue = ArrayDeque<Int>()
+
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val index = y * width + x
+                val argb = source.getRGB(x, y)
+                pixels[index] = argb
+                if (((argb ushr 24) and 0xFF) > 0) {
+                    visited[index] = true
+                    queue.addLast(index)
+                }
+            }
+        }
+
+        while (!queue.isEmpty()) {
+            val index = queue.removeFirst()
+            val x = index % width
+            val y = index / width
+            val rgb = pixels[index] and 0x00FFFFFF
+
+            if (x > 0) {
+                val left = index - 1
+                if (!visited[left]) {
+                    visited[left] = true
+                    pixels[left] = rgb
+                    queue.addLast(left)
+                }
+            }
+            if (x + 1 < width) {
+                val right = index + 1
+                if (!visited[right]) {
+                    visited[right] = true
+                    pixels[right] = rgb
+                    queue.addLast(right)
+                }
+            }
+            if (y > 0) {
+                val up = index - width
+                if (!visited[up]) {
+                    visited[up] = true
+                    pixels[up] = rgb
+                    queue.addLast(up)
+                }
+            }
+            if (y + 1 < height) {
+                val down = index + width
+                if (!visited[down]) {
+                    visited[down] = true
+                    pixels[down] = rgb
+                    queue.addLast(down)
+                }
+            }
+        }
+
+        val result = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+        result.setRGB(0, 0, width, height, pixels, 0, width)
+        return result
     }
 
     // ------ Animation parsing ------

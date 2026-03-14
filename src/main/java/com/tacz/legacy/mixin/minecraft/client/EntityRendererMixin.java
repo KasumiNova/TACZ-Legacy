@@ -2,6 +2,7 @@ package com.tacz.legacy.mixin.minecraft.client;
 
 import com.tacz.legacy.api.client.other.KeepingItemRenderer;
 import com.tacz.legacy.api.item.IGun;
+import com.tacz.legacy.client.event.FirstPersonFovHooks;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.renderer.EntityRenderer;
@@ -9,7 +10,9 @@ import net.minecraft.item.ItemStack;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Matches upstream TACZ item-in-hand bob suppression for first-person gun rendering.
@@ -37,6 +40,12 @@ public abstract class EntityRendererMixin {
         if (!tacz$shouldSkipHandBobbing()) {
             applyBobbing(partialTicks);
         }
+    }
+
+    @Inject(method = "getFOVModifier", at = @At("RETURN"), cancellable = true)
+    private void tacz$applyGunScopeFov(float partialTicks, boolean useFOVSetting, CallbackInfoReturnable<Float> cir) {
+        float resolved = FirstPersonFovHooks.applyFovModifier(cir.getReturnValue(), partialTicks, useFOVSetting);
+        cir.setReturnValue(resolved);
     }
 
     private boolean tacz$shouldSkipHandBobbing() {

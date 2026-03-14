@@ -11,8 +11,11 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.ResourceLocation;
+import org.lwjgl.BufferUtils;
+import org.lwjgl.opengl.GL11;
 
 import javax.annotation.Nullable;
+import java.nio.FloatBuffer;
 
 /**
  * Functional renderer for attachments mounted on a gun model node.
@@ -78,7 +81,15 @@ public class AttachmentRender implements IFunctionalRenderer {
         if (attachmentItem == null || attachmentItem.isEmpty()) {
             return;
         }
-        renderAttachment(attachmentItem, bedrockGunModel.getCurrentGunItem(), bedrockGunModel.getActiveGunTexture(), light, false);
+        FloatBuffer capturedModelView = captureCurrentModelView();
+        ItemStack gunItem = bedrockGunModel.getCurrentGunItem();
+        ResourceLocation gunTexture = bedrockGunModel.getActiveGunTexture();
+        bedrockGunModel.delegateRender(new IFunctionalRenderer() {
+            @Override
+            public void render(int delegatedLight) {
+                renderCapturedAttachment(capturedModelView, attachmentItem, gunItem, gunTexture, light, false);
+            }
+        });
     }
 
     @Override
@@ -88,5 +99,30 @@ public class AttachmentRender implements IFunctionalRenderer {
             return;
         }
         renderAttachment(attachmentItem, bedrockGunModel.getCurrentGunItem(), bedrockGunModel.getActiveGunTexture(), light, true);
+    }
+
+    private static FloatBuffer captureCurrentModelView() {
+        FloatBuffer buffer = BufferUtils.createFloatBuffer(16);
+        GL11.glGetFloat(GL11.GL_MODELVIEW_MATRIX, buffer);
+        buffer.rewind();
+        return buffer;
+    }
+
+    private static void renderCapturedAttachment(
+            FloatBuffer capturedModelView,
+            ItemStack attachmentItem,
+            @Nullable ItemStack gunItem,
+            @Nullable ResourceLocation gunTexture,
+            int light,
+            boolean bloomOnly
+    ) {
+        GlStateManager.pushMatrix();
+        try {
+            capturedModelView.rewind();
+            GL11.glLoadMatrix(capturedModelView);
+            renderAttachment(attachmentItem, gunItem, gunTexture, light, bloomOnly);
+        } finally {
+            GlStateManager.popMatrix();
+        }
     }
 }

@@ -78,7 +78,14 @@ class RefitAttachmentAccessorParityTest {
 
             val laserConfig = TACZGunPackPresentation.resolveAttachmentLaserConfig(snapshot, ResourceLocation("demo", "refit_scope"))
             assertEquals(
-                TACZAttachmentLaserConfigDefinition(defaultColor = 0x00FF00, canEdit = true, length = 3, width = 0.01f),
+                TACZAttachmentLaserConfigDefinition(
+                    defaultColor = 0x00FF00,
+                    canEdit = true,
+                    length = 3,
+                    width = 0.01f,
+                    thirdPersonLength = 2.0f,
+                    thirdPersonWidth = 0.008f,
+                ),
                 laserConfig,
             )
         }

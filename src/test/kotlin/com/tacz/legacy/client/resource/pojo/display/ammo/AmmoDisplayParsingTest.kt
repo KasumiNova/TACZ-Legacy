@@ -103,6 +103,30 @@ class AmmoDisplayParsingTest {
     }
 
     @Test
+    fun `parse ammo display with shell model`() {
+        val json = """
+        {
+          "model": "tacz:ammo/model/test_geo",
+          "texture": "tacz:ammo/uv/test",
+          "shell": {
+            "model": "tacz:shell/test_shell_geo",
+            "texture": "tacz:shell/test_shell"
+          }
+        }
+        """.trimIndent()
+
+        val display = gson.fromJson(json, AmmoDisplay::class.java)
+        assertNotNull(display.shellDisplay)
+        assertEquals(ResourceLocation("tacz", "shell/test_shell_geo"), display.shellDisplay!!.modelLocation)
+
+        display.init()
+        assertEquals(
+            ResourceLocation("tacz", "textures/shell/test_shell.png"),
+            display.shellDisplay!!.modelTexture,
+        )
+    }
+
+    @Test
     fun `default transform returns ammo defaults`() {
         val defaultTransform = AmmoTransform.getDefault()
         assertNotNull(defaultTransform)

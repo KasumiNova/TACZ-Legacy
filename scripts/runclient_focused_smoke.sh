@@ -31,8 +31,12 @@ DISABLE_EXPLOSIVE="${FOCUSED_SMOKE_DISABLE_EXPLOSIVE:-false}"
 DISABLE_ATTACHMENTS="${FOCUSED_SMOKE_DISABLE_ATTACHMENTS:-false}"
 REFIT_PREVIEW="${FOCUSED_SMOKE_REFIT_PREVIEW:-false}"
 REFIT_TYPE="${FOCUSED_SMOKE_REFIT_TYPE:-}"
+REFIT_ATTACHMENT="${FOCUSED_SMOKE_REFIT_ATTACHMENT:-}"
+AUTO_ADS="${FOCUSED_SMOKE_AUTO_ADS:-false}"
 PASS_AFTER_ANIMATION="${FOCUSED_SMOKE_PASS_AFTER_ANIMATION:-false}"
+PASS_AFTER_ADS="${FOCUSED_SMOKE_PASS_AFTER_ADS:-false}"
 PASS_AFTER_REFIT="${FOCUSED_SMOKE_PASS_AFTER_REFIT:-false}"
+SKIP_INSPECT="${FOCUSED_SMOKE_SKIP_INSPECT:-false}"
 SKIP_RELOAD="${FOCUSED_SMOKE_SKIP_RELOAD:-false}"
 HIT_FEEDBACK_TARGET="${FOCUSED_SMOKE_SPAWN_HIT_TARGET:-false}"
 BULLET_SPEED_MULTIPLIER="${FOCUSED_SMOKE_BULLET_SPEED_MULTIPLIER:-}"
@@ -294,8 +298,11 @@ GRADLE_CMD=(
   "-Dtacz.focusedSmoke.disableExplosive=${DISABLE_EXPLOSIVE}"
   "-Dtacz.focusedSmoke.disableAttachments=${DISABLE_ATTACHMENTS}"
   "-Dtacz.focusedSmoke.refitPreview=${REFIT_PREVIEW}"
+  "-Dtacz.focusedSmoke.autoAim=${AUTO_ADS}"
   "-Dtacz.focusedSmoke.passAfterAnimation=${PASS_AFTER_ANIMATION}"
+  "-Dtacz.focusedSmoke.passAfterAim=${PASS_AFTER_ADS}"
   "-Dtacz.focusedSmoke.passAfterRefit=${PASS_AFTER_REFIT}"
+  "-Dtacz.focusedSmoke.skipInspect=${SKIP_INSPECT}"
   "-Dtacz.focusedSmoke.skipReload=${SKIP_RELOAD}"
   "-Dtacz.focusedSmoke.hitFeedbackTarget=${HIT_FEEDBACK_TARGET}"
   "-Dtacz.audio.backend=${AUDIO_BACKEND}"
@@ -312,6 +319,9 @@ if [[ -n "$REGULAR_GUN" ]]; then
 fi
 if [[ -n "$REFIT_TYPE" ]]; then
   GRADLE_CMD+=("-Dtacz.focusedSmoke.refitType=${REFIT_TYPE}")
+fi
+if [[ -n "$REFIT_ATTACHMENT" ]]; then
+  GRADLE_CMD+=("-Dtacz.focusedSmoke.refitAttachment=${REFIT_ATTACHMENT}")
 fi
 if [[ -n "$BULLET_SPEED_MULTIPLIER" ]]; then
   GRADLE_CMD+=("-Dtacz.focusedSmoke.bulletSpeedMultiplier=${BULLET_SPEED_MULTIPLIER}")

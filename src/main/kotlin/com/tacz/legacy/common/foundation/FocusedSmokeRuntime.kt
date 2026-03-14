@@ -255,9 +255,13 @@ internal object FocusedSmokeRuntime {
     private const val DISABLE_EXPLOSIVE_PROPERTY: String = "tacz.focusedSmoke.disableExplosive"
     private const val DISABLE_ATTACHMENTS_PROPERTY: String = "tacz.focusedSmoke.disableAttachments"
     private const val REFIT_PREVIEW_PROPERTY: String = "tacz.focusedSmoke.refitPreview"
+    private const val REFIT_ATTACHMENT_PROPERTY: String = "tacz.focusedSmoke.refitAttachment"
+    private const val AUTO_AIM_PROPERTY: String = "tacz.focusedSmoke.autoAim"
     private const val PASS_AFTER_ANIMATION_PROPERTY: String = "tacz.focusedSmoke.passAfterAnimation"
+    private const val PASS_AFTER_AIM_PROPERTY: String = "tacz.focusedSmoke.passAfterAim"
     private const val PASS_AFTER_REFIT_PROPERTY: String = "tacz.focusedSmoke.passAfterRefit"
     private const val REQUIRE_TRACER_FRAME_PROPERTY: String = "tacz.focusedSmoke.requireTracerFrame"
+    private const val SKIP_INSPECT_PROPERTY: String = "tacz.focusedSmoke.skipInspect"
     private const val SKIP_RELOAD_PROPERTY: String = "tacz.focusedSmoke.skipReload"
     private const val REGULAR_SHOT_PITCH_PROPERTY: String = "tacz.focusedSmoke.regularShotPitch"
     private const val REGULAR_SHOT_YAW_PROPERTY: String = "tacz.focusedSmoke.regularShotYaw"
@@ -318,6 +322,9 @@ internal object FocusedSmokeRuntime {
     @Volatile
     private var lastAnimationDetails: String? = null
 
+    @Volatile
+    private var forcedAimActive: Boolean = false
+
     internal val enabled: Boolean
         get() = System.getProperty(ENABLED_PROPERTY, "false").toBoolean()
 
@@ -354,11 +361,23 @@ internal object FocusedSmokeRuntime {
     internal val refitPreviewEnabled: Boolean
         get() = System.getProperty(REFIT_PREVIEW_PROPERTY, "false").toBoolean()
 
+    internal val preferredRefitAttachmentId: ResourceLocation?
+        get() = parseResourceLocation(System.getProperty(REFIT_ATTACHMENT_PROPERTY))
+
+    internal val autoAimEnabled: Boolean
+        get() = System.getProperty(AUTO_AIM_PROPERTY, "false").toBoolean()
+
     internal val passAfterAnimationEnabled: Boolean
         get() = System.getProperty(PASS_AFTER_ANIMATION_PROPERTY, "false").toBoolean()
 
+    internal val passAfterAimEnabled: Boolean
+        get() = System.getProperty(PASS_AFTER_AIM_PROPERTY, "false").toBoolean()
+
     internal val passAfterRefitEnabled: Boolean
         get() = System.getProperty(PASS_AFTER_REFIT_PROPERTY, "false").toBoolean()
+
+    internal val skipInspectEnabled: Boolean
+        get() = System.getProperty(SKIP_INSPECT_PROPERTY, "false").toBoolean()
 
     internal val skipReloadEnabled: Boolean
         get() = System.getProperty(SKIP_RELOAD_PROPERTY, "false").toBoolean()
@@ -383,6 +402,13 @@ internal object FocusedSmokeRuntime {
 
     internal val tracerLengthMultiplier: Float
         get() = parsePositiveFloatProperty(TRACER_LENGTH_MULTIPLIER_PROPERTY)
+
+    internal val isForcedAimActive: Boolean
+        get() = enabled && forcedAimActive
+
+    internal fun setForcedAimActive(active: Boolean) {
+        forcedAimActive = enabled && active
+    }
 
     @Synchronized
     internal fun currentPlan(snapshot: TACZRuntimeSnapshot = TACZGunPackRuntimeRegistry.getSnapshot()): FocusedSmokePlan? {
@@ -417,6 +443,7 @@ internal object FocusedSmokeRuntime {
         passLogged = false
         failureReason = null
         lastAnimationDetails = null
+        forcedAimActive = false
         loggedKeys.clear()
     }
 

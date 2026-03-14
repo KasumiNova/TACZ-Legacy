@@ -5,8 +5,11 @@ import com.tacz.legacy.api.item.IAmmo
 import com.tacz.legacy.api.item.IGun
 import com.tacz.legacy.api.item.attachment.AttachmentType
 import com.tacz.legacy.client.event.FirstPersonRenderMatrices
+import com.tacz.legacy.client.model.BedrockAnimatedModel
 import com.tacz.legacy.client.model.BedrockGunModel
 import com.tacz.legacy.client.model.bedrock.BedrockModel
+import com.tacz.legacy.client.model.functional.BeamRenderer
+import com.tacz.legacy.client.renderer.bloom.TACZBloomBridge
 import com.tacz.legacy.client.resource.TACZClientAssetManager
 import com.tacz.legacy.client.resource.pojo.TransformScale
 import com.tacz.legacy.client.resource.pojo.display.ammo.AmmoDisplay
@@ -141,7 +144,16 @@ internal object TACZGuiModelPreviewRenderer {
 
         displayInstance.setActiveGunTexture(textureLocation)
         model.renderHand = false
-        model.render(stack)
+        val previousBeamContext = BeamRenderer.pushRenderContext(BeamRenderer.RenderContext.GUI_PREVIEW)
+        try {
+            model.render(stack)
+        } finally {
+            BeamRenderer.popRenderContext(previousBeamContext)
+        }
+        captureBloomIfSupported(textureLocation, model) {
+            model.renderHand = false
+            model.renderBloom(stack)
+        }
         model.cleanAnimationTransform()
         model.cleanCameraAnimationTransform()
 
@@ -263,12 +275,36 @@ internal object TACZGuiModelPreviewRenderer {
         )
 
         model.render()
+        captureBloomIfSupported(resolved.textureLocation, model) {
+            model.renderBloom()
+        }
 
         GlStateManager.enableCull()
         GlStateManager.disableBlend()
         GlStateManager.disableRescaleNormal()
         RenderHelper.disableStandardItemLighting()
         GlStateManager.popMatrix()
+    }
+
+    private fun captureBloomIfSupported(
+        texture: ResourceLocation,
+        model: BedrockModel,
+        renderBloom: () -> Unit,
+    ) {
+        when (model) {
+            is BedrockAnimatedModel -> {
+                val snapshot = model.captureRenderState()
+                TACZBloomBridge.captureCurrentModelBloom(texture) {
+                    model.restoreRenderState(snapshot)
+                    renderBloom()
+                    model.cleanAnimationTransform()
+                    model.cleanCameraAnimationTransform()
+                }
+            }
+            else -> {
+                TACZBloomBridge.captureCurrentModelBloom(texture, renderBloom)
+            }
+        }
     }
 
     private fun transformScaleMultiplier(scale: TransformScale?, fallback: Float): Float {

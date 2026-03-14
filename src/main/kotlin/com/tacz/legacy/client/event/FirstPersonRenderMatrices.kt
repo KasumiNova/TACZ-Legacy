@@ -114,7 +114,7 @@ internal object FirstPersonRenderMatrices {
         return interpolateMatrix(idleMatrix, aimingMatrix, clampedProgress)
     }
 
-    private fun interpolateMatrix(from: Matrix4f, to: Matrix4f, alpha: Float): Matrix4f {
+    internal fun interpolateMatrix(from: Matrix4f, to: Matrix4f, alpha: Float): Matrix4f {
         val fromTranslation = from.getTranslation(Vector3f())
         val toTranslation = to.getTranslation(Vector3f())
         val blendedTranslation = fromTranslation.lerp(toTranslation, alpha, Vector3f())

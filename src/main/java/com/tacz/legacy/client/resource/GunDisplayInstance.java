@@ -16,10 +16,16 @@ import com.tacz.legacy.client.resource.pojo.animation.bedrock.BedrockAnimationFi
 import com.tacz.legacy.client.resource.pojo.display.gun.DefaultAnimationType;
 import com.tacz.legacy.client.resource.pojo.display.gun.AmmoCountStyle;
 import com.tacz.legacy.client.resource.pojo.display.gun.GunDisplay;
+import com.tacz.legacy.client.resource.pojo.display.gun.GunLod;
+import com.tacz.legacy.client.resource.pojo.display.LaserConfig;
+import com.tacz.legacy.client.resource.pojo.display.gun.ShellEjection;
 import com.tacz.legacy.client.resource.pojo.display.gun.GunTransform;
+import com.tacz.legacy.client.resource.pojo.display.gun.TextShow;
 import com.tacz.legacy.client.resource.pojo.model.BedrockVersion;
 import com.tacz.legacy.sound.SoundManager;
+import com.tacz.legacy.util.ColorHex;
 import net.minecraft.util.ResourceLocation;
+import org.apache.commons.lang3.StringUtils;
 import org.luaj.vm2.LuaTable;
 import org.luaj.vm2.lib.jse.CoerceJavaToLua;
 
@@ -35,16 +41,19 @@ public class GunDisplayInstance {
     private static final ResourceLocation DEFAULT_RIFLE_ANIMATION = new ResourceLocation("tacz", "rifle_default");
     private static final ResourceLocation DEFAULT_PISTOL_ANIMATION = new ResourceLocation("tacz", "pistol_default");
 
-     private BedrockGunModel gunModel;
+    private BedrockGunModel gunModel;
+    private @Nullable LodModel lodModel;
     private @Nullable LuaAnimationStateMachine<GunAnimationStateContext> animationStateMachine;
     private @Nullable LuaTable stateMachineParam;
     private Map<String, ResourceLocation> sounds = Maps.newHashMap();
     private @Nullable GunTransform transform;
+    private @Nullable ShellEjection shellEjection;
     private ResourceLocation modelTexture;
     private float ironZoom = 1.2f;
     private float zoomModelFov = 70f;
     private boolean showCrosshair = false;
     private AmmoCountStyle ammoCountStyle = AmmoCountStyle.NORMAL;
+    private @Nullable LaserConfig laserConfig;
 
     private GunDisplayInstance() {}
 
@@ -53,9 +62,13 @@ public class GunDisplayInstance {
         GunDisplayInstance instance = new GunDisplayInstance();
         try {
             instance.checkTextureAndModel(display, assets);
+            instance.checkLod(display, assets);
             instance.checkAnimation(display, assets);
             instance.checkSounds(display);
             instance.checkTransform(display);
+            instance.checkShellEjection(display);
+            instance.checkTextShow(display);
+            instance.checkLaserConfig(display);
             instance.ironZoom = Math.max(display.getIronZoom(), 1.0f);
             instance.zoomModelFov = Math.min(display.getZoomModelFov(), 70f);
             instance.showCrosshair = display.isShowCrosshair();
@@ -78,6 +91,19 @@ public class GunDisplayInstance {
         modelTexture = textureLocation;
 
         gunModel = new BedrockGunModel(modelData.getPojo(), modelData.getVersion());
+    }
+
+    private void checkLod(GunDisplay display, TACZClientAssetManager assets) {
+        GunLod gunLod = display.getGunLod();
+        if (gunLod == null || gunLod.getModelLocation() == null || gunLod.getModelTexture() == null) {
+            return;
+        }
+        TACZClientAssetManager.ModelData modelData = assets.getModel(gunLod.getModelLocation());
+        if (modelData == null) {
+            return;
+        }
+        BedrockGunModel model = new BedrockGunModel(modelData.getPojo(), modelData.getVersion());
+        lodModel = new LodModel(model, gunLod.getModelTexture());
     }
 
     private void checkAnimation(GunDisplay display, TACZClientAssetManager assets) {
@@ -177,10 +203,43 @@ public class GunDisplayInstance {
         }
     }
 
+    private void checkShellEjection(GunDisplay display) {
+        shellEjection = display.getShellEjection();
+        gunModel.setShellEjection(shellEjection);
+        if (lodModel != null) {
+            lodModel.getModel().setShellEjection(shellEjection);
+        }
+    }
+
+    private void checkTextShow(GunDisplay display) {
+        Map<String, TextShow> textShowMap = collectTextShowMap(display.getTextShows());
+        gunModel.setTextShowList(textShowMap);
+    }
+
+    private void checkLaserConfig(GunDisplay display) {
+        laserConfig = display.getLaserConfig();
+    }
+
+    private static Map<String, TextShow> collectTextShowMap(Map<String, TextShow> configuredTextShows) {
+        Map<String, TextShow> textShowMap = Maps.newHashMap();
+        configuredTextShows.forEach((key, value) -> {
+            if (StringUtils.isNoneBlank(key)) {
+                value.setColorInt(ColorHex.colorTextToRgbInt(value.getColorText()));
+                textShowMap.put(key, value);
+            }
+        });
+        return textShowMap;
+    }
+
     // --- Getters ---
 
     public BedrockGunModel getGunModel() {
         return gunModel;
+    }
+
+    @Nullable
+    public LodModel getLodModel() {
+        return lodModel;
     }
 
     /**
@@ -217,6 +276,11 @@ public class GunDisplayInstance {
         return transform;
     }
 
+    @Nullable
+    public ShellEjection getShellEjection() {
+        return shellEjection;
+    }
+
     public ResourceLocation getModelTexture() {
         return modelTexture;
     }
@@ -235,5 +299,28 @@ public class GunDisplayInstance {
 
     public AmmoCountStyle getAmmoCountStyle() {
         return ammoCountStyle;
+    }
+
+    @Nullable
+    public LaserConfig getLaserConfig() {
+        return laserConfig;
+    }
+
+    public static final class LodModel {
+        private final BedrockGunModel model;
+        private final ResourceLocation texture;
+
+        private LodModel(BedrockGunModel model, ResourceLocation texture) {
+            this.model = model;
+            this.texture = texture;
+        }
+
+        public BedrockGunModel getModel() {
+            return model;
+        }
+
+        public ResourceLocation getTexture() {
+            return texture;
+        }
     }
 }

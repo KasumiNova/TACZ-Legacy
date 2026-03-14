@@ -25,6 +25,10 @@ public class AmmoDisplay {
     private AmmoEntityDisplay ammoEntity;
 
     @Nullable
+    @SerializedName("shell")
+    private ShellDisplay shellDisplay;
+
+    @Nullable
     @SerializedName("transform")
     private AmmoTransform transform;
 
@@ -50,6 +54,11 @@ public class AmmoDisplay {
     }
 
     @Nullable
+    public ShellDisplay getShellDisplay() {
+        return shellDisplay;
+    }
+
+    @Nullable
     public AmmoTransform getTransform() {
         return transform;
     }
@@ -71,6 +80,9 @@ public class AmmoDisplay {
         }
         if (ammoEntity != null && ammoEntity.modelTexture != null) {
             ammoEntity.modelTexture = expandTexturePath(ammoEntity.modelTexture);
+        }
+        if (shellDisplay != null && shellDisplay.modelTexture != null) {
+            shellDisplay.modelTexture = expandTexturePath(shellDisplay.modelTexture);
         }
     }
 

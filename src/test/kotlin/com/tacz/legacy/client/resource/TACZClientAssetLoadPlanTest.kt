@@ -77,6 +77,38 @@ class TACZClientAssetLoadPlanTest {
         )
     }
 
+    @Test
+    fun `ammo shell model and texture are included in asset load plan`() {
+        val display = parseAmmoDisplay(
+            """
+            {
+              "model": "tacz:ammo/test_model",
+              "texture": "tacz:ammo/uv/test",
+              "shell": {
+                "model": "tacz:shell/test_shell_model",
+                "texture": "tacz:shell/test_shell"
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val loadPlan = TACZClientAssetManager.buildAssetLoadPlan(
+            gunDisplays = emptyList(),
+            ammoDisplays = listOf(display),
+            attachmentDisplays = emptyList(),
+            blockDisplays = emptyList(),
+        )
+
+        assertTrue(
+            "ammo shell model should be queued for loading",
+            loadPlan.models.contains(ResourceLocation("tacz", "shell/test_shell_model")),
+        )
+        assertTrue(
+            "ammo shell texture should be queued for loading",
+            loadPlan.textures.contains(ResourceLocation("tacz", "textures/shell/test_shell.png")),
+        )
+    }
+
     private fun parseDisplay(json: String): GunDisplay =
         displayGson.fromJson(json, GunDisplay::class.java).also { it.init() }
 

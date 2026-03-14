@@ -6,6 +6,7 @@ import com.tacz.legacy.client.model.BedrockGunModel
 import com.tacz.legacy.client.model.SlotModel
 import com.tacz.legacy.client.model.TACZPerspectiveAwareBakedModel
 import com.tacz.legacy.client.model.bedrock.BedrockModel
+import com.tacz.legacy.client.model.functional.BeamRenderer
 import com.tacz.legacy.client.renderer.bloom.TACZBloomBridge
 import com.tacz.legacy.client.resource.TACZClientAssetManager
 import com.tacz.legacy.client.resource.GunDisplayInstance
@@ -102,6 +103,12 @@ internal object TACZGunItemRenderer : TileEntityItemStackRenderer() {
         val textureLocation: ResourceLocation = displayInstance?.modelTexture ?: display.modelTexture ?: return
         val registeredTexture: ResourceLocation = TACZClientAssetManager.getTextureLocation(textureLocation) ?: return
         val transformType = TACZPerspectiveAwareBakedModel.getCurrentTransformType()
+        val beamRenderContext = when (transformType) {
+            ItemCameraTransforms.TransformType.THIRD_PERSON_RIGHT_HAND -> BeamRenderer.RenderContext.THIRD_PERSON_RIGHT_HAND
+            ItemCameraTransforms.TransformType.FIRST_PERSON_LEFT_HAND,
+            ItemCameraTransforms.TransformType.FIRST_PERSON_RIGHT_HAND -> BeamRenderer.RenderContext.FIRST_PERSON
+            else -> BeamRenderer.RenderContext.NONE
+        }
 
         val runtimeModel = displayInstance?.gunModel
         val fallbackModel = if (runtimeModel == null) {
@@ -131,7 +138,12 @@ internal object TACZGunItemRenderer : TileEntityItemStackRenderer() {
         displayInstance?.setActiveGunTexture(registeredTexture)
         if (runtimeModel != null) {
             runtimeModel.renderHand = false
-            runtimeModel.render(stack)
+            val previousBeamContext = BeamRenderer.pushRenderContext(beamRenderContext)
+            try {
+                runtimeModel.render(stack)
+            } finally {
+                BeamRenderer.popRenderContext(previousBeamContext)
+            }
             captureBloomIfSupported(transformType, registeredTexture, runtimeModel) {
                 runtimeModel.renderHand = false
                 runtimeModel.renderBloom(stack)

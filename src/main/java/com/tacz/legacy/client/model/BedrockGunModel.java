@@ -10,10 +10,13 @@ import com.tacz.legacy.client.model.bedrock.BedrockPart;
 import com.tacz.legacy.client.model.bedrock.BedrockRenderMode;
 import com.tacz.legacy.client.model.bedrock.ModelRendererWrapper;
 import com.tacz.legacy.client.model.functional.AttachmentRender;
+import com.tacz.legacy.client.model.functional.BeamRenderer;
 import com.tacz.legacy.client.model.functional.LeftHandRender;
 import com.tacz.legacy.client.model.functional.MuzzleFlashRender;
 import com.tacz.legacy.client.model.functional.RightHandRender;
+import com.tacz.legacy.client.model.functional.ShellRender;
 import com.tacz.legacy.client.model.functional.TextShowRender;
+import com.tacz.legacy.client.resource.pojo.display.gun.ShellEjection;
 import com.tacz.legacy.client.model.listener.model.ModelAdditionalMagazineListener;
 import com.tacz.legacy.client.resource.TACZClientAssetManager;
 import com.tacz.legacy.client.resource.index.ClientAttachmentIndex;
@@ -57,6 +60,8 @@ import static com.tacz.legacy.client.model.GunModelConstant.REFIT_VIEW_NODE;
 import static com.tacz.legacy.client.model.GunModelConstant.REFIT_VIEW_PREFIX;
 import static com.tacz.legacy.client.model.GunModelConstant.REFIT_VIEW_SUFFIX;
 import static com.tacz.legacy.client.model.GunModelConstant.RIGHTHAND_POS_NODE;
+import static com.tacz.legacy.client.model.GunModelConstant.SHELL_ORIGIN_NODE;
+import static com.tacz.legacy.client.model.GunModelConstant.SHELL_ORIGIN_NODE_PREFIX;
 import static com.tacz.legacy.client.model.GunModelConstant.SIGHT;
 import static com.tacz.legacy.client.model.GunModelConstant.SIGHT_FOLDED;
 
@@ -72,6 +77,8 @@ public class BedrockGunModel extends BedrockAnimatedModel {
     private final EnumMap<AttachmentType, List<BedrockPart>> refitAttachmentViewPath = new EnumMap<>(AttachmentType.class);
     private final EnumMap<AttachmentType, ItemStack> currentAttachmentItem = new EnumMap<>(AttachmentType.class);
     private final Set<String> adapterToRender = new HashSet<>();
+    private final ArrayList<ShellRender> shellRenderList = new ArrayList<>();
+    private @Nullable ShellEjection shellEjection;
     @Nullable
     private final BedrockPart magazineNode;
     @Nullable
@@ -89,6 +96,8 @@ public class BedrockGunModel extends BedrockAnimatedModel {
     private List<BedrockPart> scopePosPath;
     @Nullable
     private List<BedrockPart> muzzleFlashPosPath;
+    @Nullable
+    private List<BedrockPart> laserBeamPath;
     @Nullable
     private ResourceLocation activeGunTexture;
 
@@ -109,6 +118,7 @@ public class BedrockGunModel extends BedrockAnimatedModel {
         this.ironSightPath = getPath(modelMap.get(IRON_VIEW_NODE));
         this.scopePosPath = getPath(modelMap.get(AttachmentType.SCOPE.getSerializedName() + ATTACHMENT_POS_SUFFIX));
         this.muzzleFlashPosPath = getPath(modelMap.get(MUZZLE_FLASH_ORIGIN_NODE));
+        this.laserBeamPath = getPath(modelMap.get("laser_beam"));
 
         this.setFunctionalRenderer(LEFTHAND_POS_NODE, bedrockPart -> leftHandRender);
         this.setFunctionalRenderer(RIGHTHAND_POS_NODE, bedrockPart -> rightHandRender);
@@ -126,6 +136,7 @@ public class BedrockGunModel extends BedrockAnimatedModel {
         this.setFunctionalRenderer(MAG_EXTENDED_3, bedrockPart -> magVisibilityRender(bedrockPart, 3));
         this.setFunctionalRenderer(MAG_ADDITIONAL_NODE, this::renderAdditionalMagazine);
         this.cacheRefitAttachmentViewPath();
+        this.cacheShellOriginNodes();
         allAttachmentRender();
     }
 
@@ -143,6 +154,20 @@ public class BedrockGunModel extends BedrockAnimatedModel {
             }
             String nodeName = REFIT_VIEW_PREFIX + type.getSerializedName() + REFIT_VIEW_SUFFIX;
             refitAttachmentViewPath.put(type, getPath(modelMap.get(nodeName)));
+        }
+    }
+
+    private void cacheShellOriginNodes() {
+        ModelRendererWrapper rendererWrapper = modelMap.get(SHELL_ORIGIN_NODE);
+        int shellIndex = 0;
+        int suffixIndex = 1;
+        while (rendererWrapper != null) {
+            ShellRender shellRender = new ShellRender(this, shellIndex);
+            this.setFunctionalRenderer(rendererWrapper.getModelRenderer().name, bedrockPart -> shellRender);
+            shellRenderList.add(shellRender);
+            rendererWrapper = modelMap.get(SHELL_ORIGIN_NODE_PREFIX + suffixIndex);
+            shellIndex++;
+            suffixIndex++;
         }
     }
 
@@ -330,6 +355,9 @@ public class BedrockGunModel extends BedrockAnimatedModel {
 
     public void render(ItemStack gunItem) {
         updateAttachmentRuntime(gunItem);
+        if (laserBeamPath != null) {
+            BeamRenderer.renderLaserBeam(gunItem, laserBeamPath);
+        }
         super.render();
         logFocusedSmokeMagRenderState(gunItem);
     }
@@ -480,6 +508,23 @@ public class BedrockGunModel extends BedrockAnimatedModel {
     @Nullable
     public MuzzleFlashRender getMuzzleFlashRender() {
         return muzzleFlashRender;
+    }
+
+    @Nullable
+    public ShellRender getShellRender(int index) {
+        if (index < 0 || index >= shellRenderList.size()) {
+            return null;
+        }
+        return shellRenderList.get(index);
+    }
+
+    @Nullable
+    public ShellEjection getShellEjection() {
+        return shellEjection;
+    }
+
+    public void setShellEjection(@Nullable ShellEjection shellEjection) {
+        this.shellEjection = shellEjection;
     }
 
     @Override

@@ -1,11 +1,15 @@
 package com.tacz.legacy.client.animation.statemachine;
 
+import com.tacz.legacy.TACZLegacy;
 import com.tacz.legacy.api.entity.IGunOperator;
 import com.tacz.legacy.api.entity.ReloadState;
 import com.tacz.legacy.api.item.IGun;
 import com.tacz.legacy.api.item.attachment.AttachmentType;
 import com.tacz.legacy.api.item.gun.FireMode;
+import com.tacz.legacy.client.model.BedrockGunModel;
+import com.tacz.legacy.client.model.functional.ShellRender;
 import com.tacz.legacy.client.resource.GunDisplayInstance;
+import com.tacz.legacy.client.resource.pojo.display.gun.ShellEjection;
 import com.tacz.legacy.common.resource.BoltType;
 import com.tacz.legacy.common.resource.GunCombatData;
 import com.tacz.legacy.common.resource.GunDataAccessor;
@@ -17,6 +21,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.MathHelper;
+import org.joml.Vector3f;
 import org.luaj.vm2.LuaTable;
 
 import javax.annotation.Nullable;
@@ -216,8 +221,43 @@ public class GunAnimationStateContext extends ItemAnimationStateContext {
     }
 
     public void popShellFrom(int index) {
-        // Legacy 1.12.2 first-person runtime does not yet have upstream shell ejection renderers.
-        // Keep this method exposed so Lua state machines remain script-compatible instead of crashing.
+        if (display == null) {
+            logFocusedSmokeShellSkipped(index, "display_missing");
+            return;
+        }
+        ShellEjection shellEjection = display.getShellEjection();
+        if (shellEjection == null) {
+            logFocusedSmokeShellSkipped(index, "shell_ejection_missing");
+            return;
+        }
+        BedrockGunModel gunModel = display.getGunModel();
+        if (gunModel == null) {
+            logFocusedSmokeShellSkipped(index, "gun_model_missing");
+            return;
+        }
+        Vector3f velocity = shellEjection.getRandomVelocity();
+        ShellRender shellRender = gunModel.getShellRender(index);
+        boolean mainAdded = false;
+        int mainActive = 0;
+        if (shellRender != null) {
+            shellRender.addShell(velocity);
+            mainAdded = true;
+            mainActive = shellRender.getActiveShellCount();
+        }
+
+        boolean lodAdded = false;
+        int lodActive = 0;
+        GunDisplayInstance.LodModel lodModel = display.getLodModel();
+        if (lodModel != null) {
+            ShellRender lodShellRender = lodModel.getModel().getShellRender(index);
+            if (lodShellRender != null) {
+                lodShellRender.addShell(velocity);
+                lodAdded = true;
+                lodActive = lodShellRender.getActiveShellCount();
+            }
+        }
+
+        logFocusedSmokeShellPop(index, shellEjection, mainAdded, lodAdded, mainActive, lodActive);
     }
 
     public LuaTable getStateMachineParams() {
@@ -267,5 +307,47 @@ public class GunAnimationStateContext extends ItemAnimationStateContext {
 
     public void setDisplay(@Nullable GunDisplayInstance display) {
         this.display = display;
+    }
+
+    private void logFocusedSmokeShellPop(int index, ShellEjection shellEjection, boolean mainAdded, boolean lodAdded, int mainActive, int lodActive) {
+        if (!isFocusedSmokeEnabled()) {
+            return;
+        }
+        ResourceLocation gunId = iGun != null ? iGun.getGunId(currentGunItem) : null;
+        TACZLegacy.logger.info(
+                "[FocusedSmoke] SHELL_POP gun={} index={} mainAdded={} lodAdded={} mainActive={} lodActive={} lifetimeMs={} initialVelocity={} randomVelocity={} acceleration={} angularVelocity={}",
+                gunId != null ? gunId : "unknown",
+                index,
+                mainAdded,
+                lodAdded,
+                mainActive,
+                lodActive,
+                Math.max((long) (shellEjection.getLivingTime() * 1000.0f), 0L),
+                formatVector(shellEjection.getInitialVelocity()),
+                formatVector(shellEjection.getRandomVelocity()),
+                formatVector(shellEjection.getAcceleration()),
+                formatVector(shellEjection.getAngularVelocity())
+        );
+    }
+
+    private void logFocusedSmokeShellSkipped(int index, String reason) {
+        if (!isFocusedSmokeEnabled()) {
+            return;
+        }
+        ResourceLocation gunId = iGun != null ? iGun.getGunId(currentGunItem) : null;
+        TACZLegacy.logger.info(
+                "[FocusedSmoke] SHELL_POP_SKIPPED gun={} index={} reason={}",
+                gunId != null ? gunId : "unknown",
+                index,
+                reason
+        );
+    }
+
+    private static boolean isFocusedSmokeEnabled() {
+        return Boolean.parseBoolean(System.getProperty("tacz.focusedSmoke", "false"));
+    }
+
+    private static String formatVector(Vector3f vector) {
+        return String.format("[%.3f,%.3f,%.3f]", vector.x(), vector.y(), vector.z());
     }
 }

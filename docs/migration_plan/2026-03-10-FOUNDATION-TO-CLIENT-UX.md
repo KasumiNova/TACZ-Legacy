@@ -255,6 +255,41 @@ focused smoke 已验证：
 - 但它仍未达到上游沉浸式 world-to-screen 开场、遮罩、焦点过渡与视觉 polish。
 - 后续应在当前稳定基线之上继续补体验，而不是再次从零重构布局。
 
+## 2026-03-12：Refit 配件按钮半透明 slot 贴图与空槽 UV 收口
+
+### 问题根因
+
+- `GunRefitScreen` 的空槽 icon 之前直接调用 `drawModalRectWithCustomSizedTexture(...)`，把 **32×32 源区域缩放到 14×14 按钮** 误写成了 **从 224×32 贴图里直接取 14×14 源区域**，导致空槽图标 UV 裁切错误。
+- 已装配 / 候选配件按钮之前走 `itemRender.renderItemAndEffectIntoGUI(...)` 的 1.12 GUI 物品渲染链，半透明 slot 贴图会表现成发白方块；如果直接绑定 attachment index 里的逻辑资源 ID，又会落成黑紫缺纹理，必须走 `TACZClientAssetManager.getTextureLocation(...)` 解析到已注册贴图。
+
+### 本轮收口
+
+- `GunRefitScreen` 现在对装配界面中的配件按钮与当前配件预览，直接绘制**已注册的 slot 贴图**，并沿用上游 slot quad 的 **16×16 逻辑 UV 空间**，避免 1.12 GUI item/TEISR 路径把半透明材质渲染坏。
+- 空槽 icon 改为显式按 **32×32 源区域 → 14×14 目标区域** 缩放绘制，不再错误裁取 UV。
+- 新增 `TACZGuiTextureUv` 纯函数，把 GUI 纹理区域归一化逻辑抽出来，避免以后再把“源区域尺寸”和“目标绘制尺寸”混成一件事。
+
+### 本轮验证
+
+单测：
+
+- `./gradlew test --no-daemon --rerun-tasks --tests "*TACZGuiTextureUvTest"`
+
+focused smoke：
+
+- 日志：`build/smoke-tests/runclient-focused-smoke-20260312-200418.log`
+- 关键 marker：
+  - `REFIT_SCREEN_OPEN gun=tacz:hk416d`
+  - `REFIT_ATTACHMENT_APPLIED gun=tacz:hk416d attachment=tacz:sight_srs_02`
+  - `REFIT_PREVIEW_COMPLETE gun=tacz:hk416d`
+  - `PASS mode=refit_preview ...`
+- 主证据截图：
+  - `build/smoke-tests/focused-smoke-screenshots/runclient-focused-smoke-20260312-200418/01-screen_open.png`
+
+截图结论：
+
+- 右上槽位栏已不再出现“半透明白块”；可见正常的空槽分类 icon 与已解析的 scope slot 贴图。
+- 右侧候选配件按钮列已不再出现黑紫缺纹理或白色方片，slot 贴图能以正常透明度显示实际配件图样。
+
 ## 2026-03-09：脚本系统完整对齐
 
 ### 问题背景

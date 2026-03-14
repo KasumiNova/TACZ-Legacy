@@ -5,7 +5,9 @@ import com.tacz.legacy.api.client.animation.statemachine.AnimationStateMachine
 import com.tacz.legacy.api.client.animation.statemachine.LuaAnimationStateMachine
 import com.tacz.legacy.api.client.other.KeepingItemRenderer
 import com.tacz.legacy.api.entity.IGunOperator
+import com.tacz.legacy.api.item.IAttachment
 import com.tacz.legacy.api.item.IGun
+import com.tacz.legacy.api.item.attachment.AttachmentType
 import com.tacz.legacy.client.animation.statemachine.GunAnimationConstant
 import com.tacz.legacy.client.animation.statemachine.GunAnimationStateContext
 import com.tacz.legacy.client.animation.screen.RefitTransform
@@ -13,11 +15,13 @@ import com.tacz.legacy.client.gameplay.LegacyClientGunAnimationDriver
 import com.tacz.legacy.client.model.BedrockAnimatedModel
 import com.tacz.legacy.client.model.BedrockGunModel
 import com.tacz.legacy.client.model.bedrock.BedrockPart
+import com.tacz.legacy.client.model.functional.BeamRenderer
 import com.tacz.legacy.client.model.functional.MuzzleFlashRender
+import com.tacz.legacy.client.model.functional.ShellRender
 import com.tacz.legacy.client.renderer.bloom.TACZBloomBridge
 import com.tacz.legacy.client.resource.GunDisplayInstance
 import com.tacz.legacy.client.resource.TACZClientAssetManager
-import com.tacz.legacy.mixin.minecraft.client.EntityRendererInvoker
+import com.tacz.legacy.client.resource.index.ClientAttachmentIndex
 import com.tacz.legacy.common.resource.TACZGunPackPresentation
 import com.tacz.legacy.common.resource.TACZGunPackRuntimeRegistry
 import com.tacz.legacy.util.math.Easing
@@ -76,6 +80,12 @@ internal object FirstPersonRenderGunEvent {
         val additionalQuaternion: Quaternionf,
     )
 
+    private data class ResolvedAimingView(
+        val path: List<BedrockPart>?,
+        val viewIndex: Int,
+        val transitionKey: String?,
+    )
+
     private val tracerDebugEnabled: Boolean
         get() = java.lang.Boolean.getBoolean("tacz.tracerDebug") ||
             java.lang.Boolean.parseBoolean(System.getProperty("tacz.focusedSmoke.tracerDebug", "false"))
@@ -107,15 +117,27 @@ internal object FirstPersonRenderGunEvent {
     private val aimingDynamics = SecondOrderDynamics(1.2f, 1.2f, 0.5f, 0f)
     // Refit opening smoothing
     private val refitOpeningDynamics = SecondOrderDynamics(1f, 1.2f, 0.5f, 0f)
+    private var switchViewDynamics: SecondOrderDynamics? = null
+    private var oldAimingViewMatrix: Matrix4f? = null
+    private var oldViewIndex = 0f
+    private var currentViewIndex = -1
+    private var scopeViewTransitionKey: String? = null
     // Jumping sway dynamics
     private val jumpingDynamics = SecondOrderDynamics(0.28f, 1f, 0.65f, 0f)
     private const val JUMPING_Y_SWAY = -2f
     private const val JUMPING_SWAY_TIME = 0.3f
     private const val LANDING_SWAY_TIME = 0.15f
     private var jumpingSwayProgress = 0f
+    private var lastPreparedAimingProgress: Float = 0.0f
     private var lastOnGround = false
     private var jumpingTimeStamp = -1L
 
+
+    @JvmStatic
+    fun getPreparedAimingProgress(): Float? = preparedRenderContext?.aimingProgress
+
+    @JvmStatic
+    fun getLastPreparedAimingProgress(): Float = lastPreparedAimingProgress
     // Shoot recoil/sway state
     private val shootXSwayNoise = PerlinNoise(-0.2f, 0.2f, 400)
     private val shootYRotationNoise = PerlinNoise(-0.0136f, 0.0136f, 100)
@@ -368,8 +390,12 @@ internal object FirstPersonRenderGunEvent {
             cachedMuzzleCameraPitch = null
             cachedMuzzleCameraYaw = null
             cachedMuzzleFrameId = null
+            resetScopeViewTransition()
+            lastPreparedAimingProgress = 0.0f
         }
         if (mc.gameSettings.thirdPersonView != 0) {
+            resetScopeViewTransition()
+            lastPreparedAimingProgress = 0.0f
             LegacyClientGunAnimationDriver.visualUpdateHeldGun(player, event.renderTickTime)
         }
         LegacyClientGunAnimationDriver.visualUpdateExitingAnimation(event.renderTickTime)
@@ -391,6 +417,8 @@ internal object FirstPersonRenderGunEvent {
             cachedMuzzleCameraPitch = null
             cachedMuzzleCameraYaw = null
             cachedMuzzleFrameId = null
+            resetScopeViewTransition()
+            lastPreparedAimingProgress = 0.0f
             return null
         }
         val gunId = iGun.getGunId(stack)
@@ -424,6 +452,7 @@ internal object FirstPersonRenderGunEvent {
         val refitScreenOpeningProgress = refitOpeningDynamics.update(RefitTransform.getOpeningProgress())
         val rawAimingProgress = IGunOperator.fromLivingEntity(player).getSynAimingProgress()
         val aimingProgress = aimingDynamics.update(rawAimingProgress)
+        lastPreparedAimingProgress = aimingProgress
         applyGunMovements(model, aimingProgress, partialTicks)
 
         return PreparedFirstPersonRenderContext(
@@ -499,6 +528,7 @@ internal object FirstPersonRenderGunEvent {
                 val muzzleFlashRender = model.muzzleFlashRender
                 if (muzzleFlashRender != null) {
                     MuzzleFlashRender.isSelf = true
+                    ShellRender.isSelf = true
                     val gunDisplay = TACZClientAssetManager.getGunDisplay(prepared.displayId)
                     muzzleFlashRender.setActiveMuzzleFlash(gunDisplay?.getMuzzleFlash())
                 }
@@ -525,7 +555,12 @@ internal object FirstPersonRenderGunEvent {
                 }
 
                 if (!bloomOnly) {
-                    model.render(prepared.stack)
+                    val previousBeamContext = BeamRenderer.pushRenderContext(BeamRenderer.RenderContext.FIRST_PERSON)
+                    try {
+                        model.render(prepared.stack)
+                    } finally {
+                        BeamRenderer.popRenderContext(previousBeamContext)
+                    }
                     cacheMuzzleRenderOffset(model, partialTicks)
                     if (inlineBloom) {
                         val renderedInlineBloom = TACZBloomBridge.renderInlineFirstPersonBloom(prepared.registeredTexture) {
@@ -542,6 +577,7 @@ internal object FirstPersonRenderGunEvent {
                 model.renderHand = renderHand
                 if (!bloomOnly) {
                     MuzzleFlashRender.isSelf = false
+                    ShellRender.isSelf = false
                 }
                 GlStateManager.disableBlend()
                 GlStateManager.disableRescaleNormal()
@@ -570,7 +606,8 @@ internal object FirstPersonRenderGunEvent {
         refitScreenOpeningProgress: Float,
     ) {
         val rawIdlePath = FirstPersonRenderMatrices.fromBedrockPath(model.idleSightPath)
-        val rawAimingPath = FirstPersonRenderMatrices.fromBedrockPath(model.resolveAimingViewPath(stack))
+        val resolvedAimingView = resolveAimingView(model, stack, gunId)
+        val rawAimingPath = FirstPersonRenderMatrices.fromBedrockPath(resolvedAimingView.path)
         val resolvedPaths = FirstPersonRenderMatrices.resolvePositioningPaths(rawIdlePath, rawAimingPath)
         logPositioningFallbacks(gunId, resolvedPaths)
 
@@ -581,6 +618,8 @@ internal object FirstPersonRenderGunEvent {
 
         val baseBlendWeight = (1.0f - refitScreenOpeningProgress).coerceIn(0.0f, 1.0f)
         val clampedAimingProgress = aimingProgress.coerceIn(0.0f, 1.0f)
+        val idleViewMatrix = FirstPersonRenderMatrices.buildPositioningNodeInverse(idlePath)
+        val aimingViewMatrix = buildScopeAwareAimingMatrix(gunId, aimingPath, resolvedAimingView)
         val refitTransformProgress = Easing.easeOutCubic(RefitTransform.getTransformProgress().toDouble()).toFloat()
         val fromRefitMatrix = FirstPersonRenderMatrices.buildPositioningNodeInverse(
             FirstPersonRenderMatrices.fromBedrockPath(model.getRefitAttachmentViewPath(RefitTransform.getOldTransformType())),
@@ -610,8 +649,6 @@ internal object FirstPersonRenderGunEvent {
 
         fun buildStagedFallbackMatrix(): Matrix4f {
             val fallbackMatrix = Matrix4f().identity()
-            val idleViewMatrix = FirstPersonRenderMatrices.buildPositioningNodeInverse(idlePath)
-            val aimingViewMatrix = FirstPersonRenderMatrices.buildPositioningNodeInverse(aimingPath)
             applyFiniteMatrixLerp(
                 gunId = gunId,
                 fromMatrix = fallbackMatrix,
@@ -632,11 +669,11 @@ internal object FirstPersonRenderGunEvent {
             return fallbackMatrix
         }
 
-        val baseAimingMatrix = FirstPersonRenderMatrices.buildAimingPositioningTransform(
-            idlePath = idlePath,
-            aimingPath = aimingPath,
-            aimingProgress = clampedAimingProgress,
-        )
+        val baseAimingMatrix = when {
+            clampedAimingProgress <= 0.0f -> idleViewMatrix
+            clampedAimingProgress >= 1.0f -> aimingViewMatrix
+            else -> FirstPersonRenderMatrices.interpolateMatrix(idleViewMatrix, aimingViewMatrix, clampedAimingProgress)
+        }
         val transformMatrix = Matrix4f().identity()
         if (FirstPersonRenderMatrices.isFinite(baseAimingMatrix)) {
             applyFiniteMatrixLerp(
@@ -673,6 +710,110 @@ internal object FirstPersonRenderGunEvent {
         positioningMatrixBuffer.rewind()
         GL11.glMultMatrix(positioningMatrixBuffer)
         GlStateManager.translate(0.0f, -1.5f, 0.0f)
+    }
+
+    private fun resolveAimingView(
+        model: BedrockGunModel,
+        stack: net.minecraft.item.ItemStack,
+        gunId: ResourceLocation,
+    ): ResolvedAimingView {
+        val iGun = stack.item as? IGun ?: return ResolvedAimingView(model.ironSightPath, 0, null)
+        var scopeItem = iGun.getAttachment(stack, AttachmentType.SCOPE)
+        if (scopeItem.isEmpty) {
+            scopeItem = iGun.getBuiltinAttachment(stack, AttachmentType.SCOPE)
+        }
+        if (scopeItem.isEmpty) {
+            return ResolvedAimingView(model.ironSightPath, 0, null)
+        }
+
+        val scopePosPath = model.scopePosPath ?: return ResolvedAimingView(model.ironSightPath, 0, null)
+        val iAttachment = IAttachment.getIAttachmentOrNull(scopeItem) ?: return ResolvedAimingView(scopePosPath, 0, null)
+        val attachmentIndex: ClientAttachmentIndex = TACZClientAssetManager.getAttachmentIndex(iAttachment.getAttachmentId(scopeItem))
+            ?: return ResolvedAimingView(scopePosPath, 0, null)
+        val attachmentModel = attachmentIndex.attachmentModel ?: return ResolvedAimingView(scopePosPath, 0, null)
+        val views = attachmentIndex.views
+        val viewIndex = FirstPersonRenderMatrices.resolveScopeViewSwitchIndex(views, iAttachment.getZoomNumber(scopeItem))
+        val transitionKey = if (views.size > 1) {
+            "$gunId|${iAttachment.getAttachmentId(scopeItem)}|${views.joinToString(",")}"
+        } else {
+            null
+        }
+
+        if (transitionKey != null && scopeViewTransitionKey != transitionKey) {
+            resetScopeViewTransition()
+        }
+        val selectedViewIndex = if (transitionKey != null && currentViewIndex != -1) currentViewIndex else viewIndex
+        val scopeViewPath = attachmentModel.getScopeViewPath(selectedViewIndex)
+        if (scopeViewPath.isNullOrEmpty()) {
+            return ResolvedAimingView(scopePosPath, viewIndex, null)
+        }
+        return ResolvedAimingView(
+            path = ArrayList<BedrockPart>(scopePosPath.size + scopeViewPath.size).apply {
+                addAll(scopePosPath)
+                addAll(scopeViewPath)
+            },
+            viewIndex = viewIndex,
+            transitionKey = transitionKey,
+        )
+    }
+
+    private fun buildScopeAwareAimingMatrix(
+        gunId: ResourceLocation,
+        aimingPath: List<FirstPersonRenderMatrices.PositioningNode>?,
+        resolvedAimingView: ResolvedAimingView,
+    ): Matrix4f {
+        val aimingMatrix = FirstPersonRenderMatrices.buildPositioningNodeInverse(aimingPath)
+        val transitionKey = resolvedAimingView.transitionKey ?: run {
+            resetScopeViewTransition()
+            return aimingMatrix
+        }
+
+        if (scopeViewTransitionKey != transitionKey) {
+            resetScopeViewTransition()
+            scopeViewTransitionKey = transitionKey
+        }
+
+        val previousAimingMatrix = oldAimingViewMatrix
+        val dynamics = switchViewDynamics
+        if (currentViewIndex == -1 || previousAimingMatrix == null || dynamics == null) {
+            currentViewIndex = resolvedAimingView.viewIndex
+            oldViewIndex = resolvedAimingView.viewIndex.toFloat()
+            oldAimingViewMatrix = Matrix4f(aimingMatrix)
+            switchViewDynamics = SecondOrderDynamics(0.35f, 1.2f, 0.3f, resolvedAimingView.viewIndex.toFloat())
+            return aimingMatrix
+        }
+
+        val interpretedView = dynamics.update(resolvedAimingView.viewIndex.toFloat())
+        val span = currentViewIndex.toFloat() - oldViewIndex
+        val switchingProgress = if (abs(span) < 0.05f) {
+            1.0f
+        } else {
+            ((interpretedView - oldViewIndex) / span).coerceIn(0.0f, 1.0f)
+        }
+
+        val interpolatedMatrix = Matrix4f(aimingMatrix)
+        val candidate = Matrix4f(interpolatedMatrix)
+        MathUtil.applyMatrixLerp(aimingMatrix, previousAimingMatrix, candidate, 1.0f - switchingProgress)
+        if (FirstPersonRenderMatrices.isFinite(candidate)) {
+            interpolatedMatrix.set(candidate)
+        } else {
+            logPositioningFallback(gunId, "scope view switching interpolation produced non-finite matrix, preserving current aiming matrix")
+        }
+
+        if (currentViewIndex != resolvedAimingView.viewIndex) {
+            oldAimingViewMatrix = Matrix4f(interpolatedMatrix)
+            oldViewIndex = interpretedView
+            currentViewIndex = resolvedAimingView.viewIndex
+        }
+        return interpolatedMatrix
+    }
+
+    private fun resetScopeViewTransition() {
+        switchViewDynamics = null
+        oldAimingViewMatrix = null
+        oldViewIndex = 0.0f
+        currentViewIndex = -1
+        scopeViewTransitionKey = null
     }
 
     /**
@@ -791,9 +932,8 @@ internal object FirstPersonRenderGunEvent {
         if (!tracerDebugMuzzleLogs.add(key)) {
             return
         }
-        val renderer = Minecraft.getMinecraft().entityRenderer as? EntityRendererInvoker
-        val itemRenderFov = renderer?.`tacz$invokeGetFOVModifier`(partialTicks, false) ?: 0.0f
-        val worldRenderFov = renderer?.`tacz$invokeGetFOVModifier`(partialTicks, true) ?: 0.0f
+        val itemRenderFov = FirstPersonFovHooks.getLastItemModelFov() ?: 0.0f
+        val worldRenderFov = FirstPersonFovHooks.getLastWorldFov() ?: 0.0f
         TACZLegacy.logger.info(
             "[TracerDebug] MUZZLE_OFFSET gun={} offset=({},{},{}) cameraYaw={} cameraPitch={} frameId={} itemFov={} worldFov={} zScale={}",
             gunId,
@@ -858,9 +998,8 @@ internal object FirstPersonRenderGunEvent {
     }
 
     private fun resolveItemToWorldFovScale(partialTicks: Float): Float {
-        val renderer = Minecraft.getMinecraft().entityRenderer as? EntityRendererInvoker ?: return 1.0f
-        val itemRenderFov = renderer.`tacz$invokeGetFOVModifier`(partialTicks, false).toDouble()
-        val worldRenderFov = renderer.`tacz$invokeGetFOVModifier`(partialTicks, true).toDouble()
+        val itemRenderFov = (FirstPersonFovHooks.getLastItemModelFov() ?: return 1.0f).toDouble()
+        val worldRenderFov = (FirstPersonFovHooks.getLastWorldFov() ?: return 1.0f).toDouble()
         if (itemRenderFov <= 0.0 || worldRenderFov <= 0.0) {
             return 1.0f
         }

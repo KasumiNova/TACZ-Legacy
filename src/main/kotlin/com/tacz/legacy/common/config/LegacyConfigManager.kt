@@ -179,6 +179,9 @@ internal object LegacyConfigManager {
 
     internal fun getGameDirectory(): File? = gameDirectory
 
+    @JvmStatic
+    fun isLaserFadeOutEnabledForJava(): Boolean = client.enableLaserFadeOut
+
     private fun loadCommonConfig(cfg: Configuration): Unit {
         commonConfig = cfg
         try {

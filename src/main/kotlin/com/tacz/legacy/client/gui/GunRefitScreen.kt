@@ -14,6 +14,7 @@ import com.tacz.legacy.api.modifier.Modifier
 import com.tacz.legacy.client.foundation.TACZAsciiFontHelper
 import com.tacz.legacy.client.animation.screen.RefitTransform
 import com.tacz.legacy.client.input.LegacyKeyBindings
+import com.tacz.legacy.client.resource.TACZClientAssetManager
 import com.tacz.legacy.common.application.refit.LegacyGunRefitRuntime
 import com.tacz.legacy.common.application.refit.LegacyRefitInventorySlot
 import com.tacz.legacy.common.network.TACZNetworkHandler
@@ -35,6 +36,8 @@ import net.minecraft.client.gui.GuiButton
 import net.minecraft.client.gui.GuiScreen
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.RenderHelper
+import net.minecraft.client.renderer.Tessellator
+import net.minecraft.client.renderer.vertex.DefaultVertexFormats
 import net.minecraft.client.resources.I18n
 import net.minecraft.client.settings.KeyBinding
 import net.minecraft.client.util.ITooltipFlag
@@ -45,6 +48,7 @@ import net.minecraftforge.fml.relauncher.Side
 import net.minecraftforge.fml.relauncher.SideOnly
 import org.lwjgl.input.Keyboard
 import org.lwjgl.input.Mouse
+import org.lwjgl.opengl.GL11
 import java.awt.Color
 import java.util.Locale
 import kotlin.math.abs
@@ -282,9 +286,68 @@ internal class GunRefitScreen : GuiScreen() {
 	}
 
 	fun triggerFocusedSmokeInstallFirstCandidate(): ResourceLocation? {
-		val button = inventoryButtons.firstOrNull() ?: return null
+		val preferredAttachmentId = focusedSmokePreferredAttachmentId()
+		val player = currentPlayer()
+		val preferredCandidate = if (player == null || preferredAttachmentId == null) {
+			null
+		} else {
+			compatibleCandidates(player, selectedType).firstOrNull { candidate ->
+				val attachment = candidate.stack.item as? IAttachment ?: return@firstOrNull false
+				attachment.getAttachmentId(candidate.stack) == preferredAttachmentId
+			}
+		}
+		if (player != null && preferredCandidate != null) {
+			return installFocusedSmokeCandidate(player, preferredCandidate)
+		}
+		val button = when (selectedType) {
+			AttachmentType.LASER -> inventoryButtons
+				.asSequence()
+				.mapNotNull { inventoryButton ->
+					val attachment = inventoryButton.candidate.stack.item as? IAttachment ?: return@mapNotNull null
+					val attachmentId = attachment.getAttachmentId(inventoryButton.candidate.stack)
+					val laserConfig = TACZGunPackPresentation.resolveAttachmentLaserConfig(
+						TACZGunPackRuntimeRegistry.getSnapshot(),
+						attachmentId,
+					) ?: return@mapNotNull null
+					if (!laserConfig.canEdit) {
+						return@mapNotNull null
+					}
+					Triple(inventoryButton, laserConfig.length, attachmentId.namespace.equals("tacz", ignoreCase = true))
+				}
+				.sortedWith(
+					compareByDescending<Triple<InventoryAttachmentButton, Int, Boolean>> { it.third }
+						.thenByDescending { it.second }
+				)
+				.map { it.first }
+				.firstOrNull()
+				?: inventoryButtons.firstOrNull()
+			else -> inventoryButtons.firstOrNull()
+		} ?: return null
 		val attachmentId = (button.candidate.stack.item as? IAttachment)?.getAttachmentId(button.candidate.stack) ?: return null
 		actionPerformed(button)
+		return attachmentId
+	}
+
+	private fun installFocusedSmokeCandidate(player: EntityPlayerSP, candidate: RefitCandidate): ResourceLocation? {
+		val attachmentId = (candidate.stack.item as? IAttachment)?.getAttachmentId(candidate.stack) ?: return null
+		val slotIndex = candidate.inventorySlotIndex
+		if (slotIndex != null) {
+			TACZNetworkHandler.sendToServer(
+				ClientMessageRefitGun(
+					slotIndex,
+					player.inventory.currentItem,
+					selectedType,
+				),
+			)
+		} else {
+			TACZNetworkHandler.sendToServer(
+				ClientMessageRefitGunCreative(
+					attachmentId,
+					player.inventory.currentItem,
+					selectedType,
+				),
+			)
+		}
 		return attachmentId
 	}
 
@@ -293,6 +356,23 @@ internal class GunRefitScreen : GuiScreen() {
 			return null
 		}
 		return currentIGun()?.getAttachmentId(currentGunStack(), selectedType)
+	}
+
+	fun triggerFocusedSmokeAdjustLaserPreview(): Int? {
+		val currentColor = currentEditableLaserColor() ?: return null
+		val hue = hueSlider ?: return null
+		val saturation = saturationSlider ?: return null
+		val targetColor = focusedSmokeTargetLaserColor(currentColor)
+		val targetHsb = Color.RGBtoHSB(
+			(targetColor shr 16) and 0xFF,
+			(targetColor shr 8) and 0xFF,
+			targetColor and 0xFF,
+			null,
+		)
+		hue.setSliderValue(targetHsb[0].toDouble(), notify = false)
+		saturation.setSliderValue(targetHsb[1].toDouble(), notify = false)
+		applyLaserPreview()
+		return currentEditableLaserColor()
 	}
 
 	private fun canStayOpen(): Boolean {
@@ -311,6 +391,25 @@ internal class GunRefitScreen : GuiScreen() {
 		return AttachmentType.values().firstOrNull { type ->
 			type.serializedName.equals(raw, ignoreCase = true) || type.name.equals(raw, ignoreCase = true)
 		}
+	}
+
+	private fun focusedSmokePreferredAttachmentId(): ResourceLocation? {
+		val raw = System.getProperty("tacz.focusedSmoke.refitAttachment") ?: return null
+		return runCatching { ResourceLocation(raw.trim()) }.getOrNull()
+	}
+
+	private fun focusedSmokeTargetLaserColor(currentColor: Int): Int {
+		val normalized = currentColor and 0xFFFFFF
+		val magenta = 0xFF00FF
+		val cyan = 0x00FFFF
+		return if (colorDistanceSquared(normalized, magenta) >= colorDistanceSquared(normalized, cyan)) magenta else cyan
+	}
+
+	private fun colorDistanceSquared(first: Int, second: Int): Int {
+		val dr = ((first shr 16) and 0xFF) - ((second shr 16) and 0xFF)
+		val dg = ((first shr 8) and 0xFF) - ((second shr 8) and 0xFF)
+		val db = (first and 0xFF) - (second and 0xFF)
+		return dr * dr + dg * dg + db * db
 	}
 
 	private fun syncSelectionFromTransform() {
@@ -556,10 +655,7 @@ internal class GunRefitScreen : GuiScreen() {
 		if (selectedType != AttachmentType.NONE) {
 			val attachment = LegacyGunRefitRuntime.displayedAttachment(currentGunStack(), selectedType)
 			if (!attachment.isEmpty) {
-				RenderHelper.enableGUIStandardItemLighting()
-				itemRender.renderItemAndEffectIntoGUI(attachment, left + 8, top + 24)
-				TACZAsciiFontHelper.renderItemOverlayIntoGUI(itemRender, fontRenderer, attachment, left + 8, top + 24, null)
-				RenderHelper.disableStandardItemLighting()
+				drawGuiStackIcon(attachment, left + 8, top + 24)
 			}
 			val currentAttachmentName = if (attachment.isEmpty) I18n.format("tooltip.tacz.attachment.none") else attachment.displayName
 			TACZAsciiFontHelper.drawStringWithShadow(
@@ -1068,6 +1164,71 @@ internal class GunRefitScreen : GuiScreen() {
 		GlStateManager.color(1f, 1f, 1f, 1f)
 	}
 
+	private fun drawGuiStackIcon(stack: ItemStack, x: Int, y: Int) {
+		if (drawAttachmentSlotTexture(stack, x, y)) {
+			return
+		}
+		RenderHelper.enableGUIStandardItemLighting()
+		itemRender.renderItemAndEffectIntoGUI(stack, x, y)
+		TACZAsciiFontHelper.renderItemOverlayIntoGUI(itemRender, fontRenderer, stack, x, y, null)
+		RenderHelper.disableStandardItemLighting()
+	}
+
+	private fun drawAttachmentSlotTexture(stack: ItemStack, x: Int, y: Int): Boolean {
+		val iAttachment = stack.item as? IAttachment ?: return false
+		val attachmentId = iAttachment.getAttachmentId(stack)
+		val slotTextureId = TACZClientAssetManager.getAttachmentIndex(attachmentId)?.slotTexture ?: return false
+		val slotTexture = TACZClientAssetManager.getTextureLocation(slotTextureId) ?: return false
+		mc.textureManager.bindTexture(slotTexture)
+		GlStateManager.disableLighting()
+		GlStateManager.enableBlend()
+		GlStateManager.enableAlpha()
+		GlStateManager.tryBlendFuncSeparate(
+			GlStateManager.SourceFactor.SRC_ALPHA,
+			GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA,
+			GlStateManager.SourceFactor.ONE,
+			GlStateManager.DestFactor.ZERO,
+		)
+		GlStateManager.color(1f, 1f, 1f, 1f)
+		drawScaledTextureRegion(
+			x = x,
+			y = y,
+			width = 16,
+			height = 16,
+			u = 0,
+			v = 0,
+			regionWidth = 16,
+			regionHeight = 16,
+			textureWidth = 16,
+			textureHeight = 16,
+		)
+		GlStateManager.color(1f, 1f, 1f, 1f)
+		return true
+	}
+
+	private fun drawScaledTextureRegion(
+		x: Int,
+		y: Int,
+		width: Int,
+		height: Int,
+		u: Int,
+		v: Int,
+		regionWidth: Int,
+		regionHeight: Int,
+		textureWidth: Int,
+		textureHeight: Int,
+	) {
+		val uv = TACZGuiTextureUv.region(u, v, regionWidth, regionHeight, textureWidth, textureHeight)
+		val tessellator = Tessellator.getInstance()
+		val buffer = tessellator.buffer
+		buffer.begin(GL11.GL_QUADS, DefaultVertexFormats.POSITION_TEX)
+		buffer.pos(x.toDouble(), (y + height).toDouble(), zLevel.toDouble()).tex(uv.minU.toDouble(), uv.maxV.toDouble()).endVertex()
+		buffer.pos((x + width).toDouble(), (y + height).toDouble(), zLevel.toDouble()).tex(uv.maxU.toDouble(), uv.maxV.toDouble()).endVertex()
+		buffer.pos((x + width).toDouble(), y.toDouble(), zLevel.toDouble()).tex(uv.maxU.toDouble(), uv.minV.toDouble()).endVertex()
+		buffer.pos(x.toDouble(), y.toDouble(), zLevel.toDouble()).tex(uv.minU.toDouble(), uv.minV.toDouble()).endVertex()
+		tessellator.draw()
+	}
+
 	private fun normalizedRatio(value: Float, maxValue: Float, lowerIsBetter: Boolean): Float {
 		if (maxValue <= 0f) {
 			return 0f
@@ -1148,32 +1309,38 @@ internal class GunRefitScreen : GuiScreen() {
 				return
 			}
 			hovered = contains(mouseX, mouseY)
+			GlStateManager.enableBlend()
+			GlStateManager.tryBlendFuncSeparate(
+				GlStateManager.SourceFactor.SRC_ALPHA,
+				GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA,
+				GlStateManager.SourceFactor.ONE,
+				GlStateManager.DestFactor.ZERO,
+			)
 			GlStateManager.color(1f, 1f, 1f, 1f)
 			mc.textureManager.bindTexture(TACZ_REFIT_SLOT_TEXTURE)
 			if (hovered || selectedType == type) {
-				drawTexturedModalRect(x, y, 0, 0, width, height)
+				Gui.drawModalRectWithCustomSizedTexture(x, y, 0f, 0f, width, height, SLOT_SIZE.toFloat(), SLOT_SIZE.toFloat())
 			} else {
-				drawTexturedModalRect(x + 1, y + 1, 1, 1, width - 2, height - 2)
+				Gui.drawModalRectWithCustomSizedTexture(x + 1, y + 1, 1f, 1f, width - 2, height - 2, SLOT_SIZE.toFloat(), SLOT_SIZE.toFloat())
 			}
 			val displayStack = displayedAttachment()
 			if (!displayStack.isEmpty) {
-				RenderHelper.enableGUIStandardItemLighting()
-				itemRender.renderItemAndEffectIntoGUI(displayStack, x + 1, y + 1)
-				TACZAsciiFontHelper.renderItemOverlayIntoGUI(itemRender, fontRenderer, displayStack, x + 1, y + 1, null)
-				RenderHelper.disableStandardItemLighting()
+				drawGuiStackIcon(displayStack, x + 1, y + 1)
 			} else {
 				mc.textureManager.bindTexture(TACZ_REFIT_SLOT_ICONS_TEXTURE)
 				GlStateManager.disableLighting()
 				GlStateManager.color(1f, 1f, 1f, if (isAllowed()) 0.96f else 0.72f)
-				drawModalRectWithCustomSizedTexture(
+				drawScaledTextureRegion(
 					x + 2,
 					y + 2,
-					slotIconU(type, isAllowed()).toFloat(),
-					0f,
 					SLOT_ICON_DRAW_SIZE,
 					SLOT_ICON_DRAW_SIZE,
-					SLOT_ICON_TEXTURE_WIDTH.toFloat(),
-					SLOT_ICON_UV_SIZE.toFloat(),
+					slotIconU(type, isAllowed()),
+					0,
+					SLOT_ICON_UV_SIZE,
+					SLOT_ICON_UV_SIZE,
+					SLOT_ICON_TEXTURE_WIDTH,
+					SLOT_ICON_UV_SIZE,
 				)
 				GlStateManager.color(1f, 1f, 1f, 1f)
 			}
@@ -1200,17 +1367,21 @@ internal class GunRefitScreen : GuiScreen() {
 				return
 			}
 			hovered = contains(mouseX, mouseY)
+			GlStateManager.enableBlend()
+			GlStateManager.tryBlendFuncSeparate(
+				GlStateManager.SourceFactor.SRC_ALPHA,
+				GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA,
+				GlStateManager.SourceFactor.ONE,
+				GlStateManager.DestFactor.ZERO,
+			)
 			GlStateManager.color(1f, 1f, 1f, 1f)
 			mc.textureManager.bindTexture(TACZ_REFIT_SLOT_TEXTURE)
 			if (hovered) {
-				drawTexturedModalRect(x, y, 0, 0, width, height)
+				Gui.drawModalRectWithCustomSizedTexture(x, y, 0f, 0f, width, height, SLOT_SIZE.toFloat(), SLOT_SIZE.toFloat())
 			} else {
-				drawTexturedModalRect(x + 1, y + 1, 1, 1, width - 2, height - 2)
+				Gui.drawModalRectWithCustomSizedTexture(x + 1, y + 1, 1f, 1f, width - 2, height - 2, SLOT_SIZE.toFloat(), SLOT_SIZE.toFloat())
 			}
-			RenderHelper.enableGUIStandardItemLighting()
-			itemRender.renderItemAndEffectIntoGUI(candidate.stack, x + 1, y + 1)
-			TACZAsciiFontHelper.renderItemOverlayIntoGUI(itemRender, fontRenderer, candidate.stack, x + 1, y + 1, null)
-			RenderHelper.disableStandardItemLighting()
+			drawGuiStackIcon(candidate.stack, x + 1, y + 1)
 		}
 
 		fun contains(mouseX: Int, mouseY: Int): Boolean = mouseX >= x && mouseY >= y && mouseX < x + width && mouseY < y + height
@@ -1328,9 +1499,15 @@ internal class GunRefitScreen : GuiScreen() {
 			super.mouseReleased(mouseX, mouseY)
 		}
 
+		fun setSliderValue(value: Double, notify: Boolean = true) {
+			sliderValue = value.coerceIn(0.0, 1.0)
+			if (notify) {
+				onValueChanged()
+			}
+		}
+
 		private fun updateValue(mouseX: Int) {
-			sliderValue = ((mouseX - x).toDouble() / (width - 6).toDouble()).coerceIn(0.0, 1.0)
-			onValueChanged()
+			setSliderValue((mouseX - x).toDouble() / (width - 6).toDouble())
 		}
 
 		private fun contains(mouseX: Int, mouseY: Int): Boolean = mouseX >= x && mouseY >= y && mouseX < x + width && mouseY < y + height

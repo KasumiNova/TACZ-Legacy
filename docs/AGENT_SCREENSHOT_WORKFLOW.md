@@ -56,8 +56,12 @@
 - `FOCUSED_SMOKE_SCREENSHOT_POST_PASS_GRACE_SECONDS=2`（当目标 marker 出现在服务端 `PASS` 之后的 client 下一帧时很有用，例如 `CAMERA_ANIMATION_APPLIED`、`MUZZLE_FLASH_VISIBLE` 这类晚一点才落日志/截图的可视证据）
 - `FOCUSED_SMOKE_SCREENSHOT_WINDOW_QUERY='Minecraft 1.12.2'`
 - `FOCUSED_SMOKE_REFIT_TYPE='extended_mag'`（focused smoke 自动改装时优先聚焦指定槽位，适合条件渲染验收）
+- `FOCUSED_SMOKE_REFIT_ATTACHMENT='tacz:scope_standard_8x'`（focused smoke 自动改装时直接请求指定候选附件，避免分页/候选顺序导致样本不稳定）
+- `FOCUSED_SMOKE_AUTO_ADS=true`（focused smoke 会主动进入 ADS，并通过现有 `IGunOperator.aim(...) + ClientMessagePlayerAim` 链路维持开镜）
+- `FOCUSED_SMOKE_PASS_AFTER_ADS=true`（在命中 `ADS_READY` 后直接 PASS，适合专门验证 scope/sight/倍镜的 fully-aimed 可视状态）
 - `FOCUSED_SMOKE_PASS_AFTER_ANIMATION=true`（只验证动画/准星时，在 `ANIMATION_OBSERVED` 后直接 PASS）
 - `FOCUSED_SMOKE_PASS_AFTER_REFIT=true`（只验证改装预览/附件条件渲染时，在 `REFIT_ATTACHMENT_APPLIED` + `REFIT_PREVIEW_COMPLETE` 后直接 PASS）
+- `FOCUSED_SMOKE_SKIP_INSPECT=true`（专门验证第一枪的 `INPUT_SHOOT` 视觉效果时很有用；默认脚本的 inspect 态会先打断检视并回到 idle，不会在同一次输入里触发 `popShellFrom()`）
 - `FOCUSED_SMOKE_BULLET_SPEED_MULTIPLIER=0.45`（focused smoke 专用弹速倍率；可把 tracer 留在镜头里更久，方便抓图）
 - `FOCUSED_SMOKE_TRACER_SIZE_MULTIPLIER=6.0`（focused smoke 专用 tracer 粗细倍率）
 - `FOCUSED_SMOKE_TRACER_LENGTH_MULTIPLIER=5.0`（focused smoke 专用 tracer 长度倍率）
@@ -71,6 +75,12 @@
 - `TRACER_CAPTURE_OVERRIDES` 证明抓图倍率（弹速 / 粗细 / 长度）不是默认值；
 - `FIRST_PERSON_LATCH` 证明 tracer 锁定到的第一人称相机 yaw/pitch 与玩家视角一致；
 - `TRACER_PROJECTION` 则直接给出 tail/head/center 的屏幕坐标，可用来判定 tracer 是否仍然从屏幕边缘斜插进来。
+
+补充经验：scope / sight 验收现在优先使用 `FOCUSED_SMOKE_AUTO_ADS=true`，并把截图触发点改成 `ADS_READY`，例如：
+
+- `FOCUSED_SMOKE_SCREENSHOT_PLAN='ads_ready|\[FocusedSmoke] ADS_READY|1'`
+
+这样抓到的帧会比单纯盯 `ANIMATION_OBSERVED` 更接近真实的 fully-aimed 画面；若某个倍率镜仍显得没完全“贴眼”，优先增加 delay（如 `1.5` / `2` 秒）再判断，而不是先怀疑 optic runtime 没跑起来。
 
 多截图运行结果会写到：
 

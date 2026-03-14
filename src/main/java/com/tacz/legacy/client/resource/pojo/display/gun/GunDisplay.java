@@ -2,6 +2,7 @@ package com.tacz.legacy.client.resource.pojo.display.gun;
 
 import com.google.common.collect.Maps;
 import com.google.gson.annotations.SerializedName;
+import com.tacz.legacy.client.resource.pojo.display.LaserConfig;
 import net.minecraft.util.ResourceLocation;
 
 import javax.annotation.Nullable;
@@ -75,6 +76,9 @@ public class GunDisplay {
     @Nullable
     @SerializedName("muzzle_flash")
     private MuzzleFlash muzzleFlash;
+    @Nullable
+    @SerializedName("laser")
+    private LaserConfig laserConfig;
     @SerializedName("show_crosshair")
     private boolean showCrosshair = false;
     @SerializedName("ammo_count_style")
@@ -192,6 +196,11 @@ public class GunDisplay {
 
     public AmmoCountStyle getAmmoCountStyle() {
         return ammoCountStyle;
+    }
+
+    @Nullable
+    public LaserConfig getLaserConfig() {
+        return laserConfig;
     }
 
     public Map<String, TextShow> getTextShows() {

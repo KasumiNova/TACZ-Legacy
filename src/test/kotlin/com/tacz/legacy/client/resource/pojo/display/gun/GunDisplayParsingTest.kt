@@ -199,6 +199,31 @@ class GunDisplayParsingTest {
     }
 
     @Test
+    fun `parse gun display laser config with defaults`() {
+        val json = """
+        {
+          "model": "tacz:gun/model/minigun_geo",
+          "texture": "tacz:gun/uv/minigun",
+          "laser": {
+            "default_color": "0x00FF00",
+            "can_edit": true,
+            "length": 10,
+            "width": 0.008
+          }
+        }
+        """.trimIndent()
+
+        val display = gson.fromJson(json, GunDisplay::class.java)
+        assertNotNull(display.laserConfig)
+        assertEquals(0x00FF00, display.laserConfig!!.defaultColor)
+        assertTrue(display.laserConfig!!.canEdit())
+        assertEquals(10, display.laserConfig!!.length)
+        assertEquals(0.008f, display.laserConfig!!.width, 0.0001f)
+        assertEquals(2.0f, display.laserConfig!!.lengthThird, 0.0001f)
+        assertEquals(0.008f, display.laserConfig!!.widthThird, 0.0001f)
+    }
+
+    @Test
     fun `defaults when fields are absent`() {
         val json = """
         {

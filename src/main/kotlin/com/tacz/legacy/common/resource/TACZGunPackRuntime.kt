@@ -318,6 +318,9 @@ internal object TACZGunPackRuntimeRegistry {
 
     internal fun getSnapshot(): TACZRuntimeSnapshot = snapshot
 
+    @JvmStatic
+    fun currentSnapshotForJava(): TACZRuntimeSnapshot = snapshot
+
     internal fun clearForTests(): Unit {
         snapshot = TACZRuntimeSnapshot.EMPTY
     }

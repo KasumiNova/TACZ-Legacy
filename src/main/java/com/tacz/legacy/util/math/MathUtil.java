@@ -14,6 +14,16 @@ import javax.annotation.Nonnull;
 public class MathUtil {
     public static final float[] QUATERNION_ONE = {0, 0, 0, 1};
 
+    public static double magnificationToFovMultiplier(double magnification, double currentFov) {
+        return magnificationToFov(magnification, currentFov) / currentFov;
+    }
+
+    public static double magnificationToFov(double magnification, double currentFov) {
+        double currentTan = Math.tan(Math.toRadians(currentFov / 2.0));
+        double newTan = currentTan / magnification;
+        return Math.toDegrees(Math.atan(newTan)) * 2.0;
+    }
+
     /**
      * 按照 z(roll) -> y(yaw) -> x(pitch) 的旋转顺序，求四元数。
      * @param pitch 绕 x 轴旋转的弧度

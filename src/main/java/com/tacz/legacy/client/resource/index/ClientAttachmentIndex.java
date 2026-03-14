@@ -2,13 +2,19 @@ package com.tacz.legacy.client.resource.index;
 
 import com.tacz.legacy.client.model.BedrockAttachmentModel;
 import com.tacz.legacy.client.resource.TACZClientAssetManager;
+import com.tacz.legacy.client.resource.pojo.display.LaserConfig;
 import com.tacz.legacy.client.resource.pojo.display.attachment.AttachmentDisplay;
 import com.tacz.legacy.client.resource.pojo.display.attachment.AttachmentLod;
+import com.tacz.legacy.client.resource.pojo.display.gun.TextShow;
 import com.tacz.legacy.client.resource.pojo.model.BedrockVersion;
+import com.tacz.legacy.util.ColorHex;
 import net.minecraft.util.ResourceLocation;
+import org.apache.commons.lang3.StringUtils;
 
 import javax.annotation.Nullable;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Client-side attachment render/runtime index.
@@ -36,6 +42,8 @@ public class ClientAttachmentIndex {
     private float fov = 70.0f;
     @Nullable
     private float[] viewsFov;
+    @Nullable
+    private LaserConfig laserConfig;
 
     private ClientAttachmentIndex() {
     }
@@ -52,9 +60,30 @@ public class ClientAttachmentIndex {
         index.sight = display.isSight();
         index.fov = display.getFov();
         index.viewsFov = normalizeViewsFov(display.getViewsFov(), index.views.length, index.fov);
+        index.laserConfig = display.getLaserConfig();
         index.attachmentModel = loadAttachmentModel(display.getModel(), assets, index.scope, index.sight);
+        checkTextShow(display, index.attachmentModel);
         index.lodModel = loadLodModel(display.getAttachmentLod(), assets, index.scope, index.sight);
         return index;
+    }
+
+    private static void checkTextShow(AttachmentDisplay display, @Nullable BedrockAttachmentModel model) {
+        if (model == null) {
+            return;
+        }
+        Map<String, TextShow> textShowMap = collectTextShowMap(display.getTextShows());
+        model.setTextShowList(textShowMap);
+    }
+
+    private static Map<String, TextShow> collectTextShowMap(Map<String, TextShow> configuredTextShows) {
+        Map<String, TextShow> textShowMap = new HashMap<>();
+        configuredTextShows.forEach((key, textShow) -> {
+            if (StringUtils.isNoneBlank(key)) {
+                textShow.setColorInt(ColorHex.colorTextToRgbInt(textShow.getColorText()));
+                textShowMap.put(key, textShow);
+            }
+        });
+        return textShowMap;
     }
 
     @Nullable
@@ -174,6 +203,11 @@ public class ClientAttachmentIndex {
 
     public float getFov() {
         return fov;
+    }
+
+    @Nullable
+    public LaserConfig getLaserConfig() {
+        return laserConfig;
     }
 
     @Nullable

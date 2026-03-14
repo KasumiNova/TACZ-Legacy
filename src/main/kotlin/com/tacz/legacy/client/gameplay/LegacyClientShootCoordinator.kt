@@ -11,6 +11,7 @@ import com.tacz.legacy.client.event.FirstPersonRenderGunEvent
 import com.tacz.legacy.client.event.TACZCameraRecoilHandler
 import com.tacz.legacy.client.resource.GunDisplayInstance
 import com.tacz.legacy.client.sound.TACZClientGunSoundCoordinator
+import com.tacz.legacy.common.foundation.FocusedSmokeRuntime
 import com.tacz.legacy.common.network.TACZNetworkHandler
 import com.tacz.legacy.common.network.message.client.ClientMessagePlayerShoot
 import com.tacz.legacy.common.resource.BoltType
@@ -126,9 +127,11 @@ internal object LegacyClientShootCoordinator {
         val fireEvent = GunFireEvent(player, stack, Side.CLIENT)
         val fireAccepted = !MinecraftForge.EVENT_BUS.post(fireEvent)
         if (fireAccepted) {
+            var animationTriggered = false
             if (triggerAnimation) {
-                LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_SHOOT)
+                animationTriggered = LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_SHOOT)
             }
+            logFocusedSmokeShootTrigger(gunId.toString(), display, animationTriggered, phase = "attempt")
             TACZClientGunSoundCoordinator.stopPlayGunSound(display, SoundManager.INSPECT_SOUND)
             if (TACZGunSoundRouting.resolveNearbyFireSoundProfile(stack).useSilenceSound) {
                 TACZClientGunSoundCoordinator.playSilenceSound(player, display, gunData)
@@ -182,7 +185,13 @@ internal object LegacyClientShootCoordinator {
                 Minecraft.getMinecraft().addScheduledTask {
                     val fireEvent = GunFireEvent(player, stack, Side.CLIENT)
                     if (!MinecraftForge.EVENT_BUS.post(fireEvent)) {
-                        LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_SHOOT)
+                        val animationTriggered = LegacyClientGunAnimationDriver.triggerIfInitialized(stack, GunAnimationConstant.INPUT_SHOOT)
+                        logFocusedSmokeShootTrigger(
+                            gunId = iGun.getGunId(stack).toString(),
+                            display = display,
+                            animationTriggered = animationTriggered,
+                            phase = "burst",
+                        )
                         TACZClientGunSoundCoordinator.stopPlayGunSound(display, SoundManager.INSPECT_SOUND)
                         if (useSilence) {
                             TACZClientGunSoundCoordinator.playSilenceSound(player, display, gunData)
@@ -211,5 +220,25 @@ internal object LegacyClientShootCoordinator {
         var coolDown = interval - (System.currentTimeMillis() - clientShootTimestampMs)
         coolDown -= 5L
         return if (coolDown < 0L) 0L else coolDown
+    }
+
+    private fun logFocusedSmokeShootTrigger(
+        gunId: String,
+        display: GunDisplayInstance?,
+        animationTriggered: Boolean,
+        phase: String,
+    ) {
+        if (!FocusedSmokeRuntime.enabled) {
+            return
+        }
+        val stateMachine = display?.animationStateMachine
+        com.tacz.legacy.TACZLegacy.logger.info(
+            "[FocusedSmoke] SHOOT_ANIMATION_TRIGGER gun={} phase={} triggered={} displayPresent={} smInitialized={}",
+            gunId,
+            phase,
+            animationTriggered,
+            display != null,
+            stateMachine?.isInitialized ?: false,
+        )
     }
 }
